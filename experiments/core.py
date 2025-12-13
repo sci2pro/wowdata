@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Tuple, Union
 
 import petl as etl
 
@@ -13,6 +13,29 @@ except Exception:  # pragma: no cover
     Detector = None
 
 FrictionlessSchema = Dict[str, Any]
+
+# --- WowDataUserError: instructional user-facing errors ---
+from typing import Optional
+
+
+class WowDataUserError(Exception):
+    """An instructional error intended for end users.
+
+    Use this for mistakes in the pipeline definition (invalid params, missing columns, etc.).
+    It carries a short error code and an optional hint to guide the user.
+    """
+
+    def __init__(self, code: str, message: str, *, hint: Optional[str] = None):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.hint = hint
+
+    def __str__(self) -> str:
+        base = f"[{self.code}] {self.message}"
+        if self.hint:
+            return base + f"\nHint: {self.hint}"
+        return base
 
 
 def _infer_type_from_uri(uri: str) -> Optional[str]:
@@ -251,38 +274,60 @@ class Transform:
         if op == "filter":
             # v0: string expressions will be compiled later.
             # Here we keep a placeholder to wire the system; implement parsing next.
-            raise NotImplementedError("Transform('filter') execution not implemented yet (needs expr compiler).")
+            raise WowDataUserError(
+                "E_FILTER_NOT_IMPL",
+                "Transform('filter') execution is not implemented yet.",
+                hint="For now, use select/drop/cast/validate, or wait for the expression compiler.",
+            )
 
         if op == "select":
             cols = p.get("columns")
             if not isinstance(cols, list) or not cols:
-                raise ValueError("select requires params.columns: [..]")
+                raise WowDataUserError(
+                    "E_SELECT_PARAMS",
+                    "select requires params.columns as a non-empty list of column names.",
+                    hint="Example: Transform('select', params={'columns': ['person_id', 'age']})",
+                )
             return etl.cut(table, *cols)
 
         if op == "drop":
             cols = p.get("columns")
             if not isinstance(cols, list) or not cols:
-                raise ValueError("drop requires params.columns: [..]")
+                raise WowDataUserError(
+                    "E_DROP_PARAMS",
+                    "drop requires params.columns as a non-empty list of column names.",
+                    hint="Example: Transform('drop', params={'columns': ['debug_col']})",
+                )
             return etl.cutout(table, *cols)
 
         if op == "cast":
-            header = list(etl.header(table))
             types = p.get("types")
+            if not isinstance(types, dict) or not types:
+                raise WowDataUserError(
+                    "E_CAST_TYPES",
+                    "cast requires params.types as a non-empty mapping: {column: type, ...}.",
+                    hint="Example: Transform('cast', params={'types': {'age': 'integer'}, 'on_error': 'null'})",
+                )
+
+            header = list(etl.header(table))
             missing = [c for c in types.keys() if c not in header]
             if missing:
-                raise ValueError(
-                    "cast refers to column(s) not present in the current table: "
-                    f"{missing}. "
-                    "This usually happens if you applied select/drop before cast. "
-                    "Fix by moving cast earlier in the pipeline, or update cast.types "
-                    "to match the selected columns."
+                raise WowDataUserError(
+                    "E_CAST_MISSING_COL",
+                    "cast refers to column(s) not present in the current table: " + str(missing) + ".",
+                    hint=(
+                        "This usually happens if you applied select/drop before cast. "
+                        "Fix by moving cast earlier in the pipeline, or update cast.types to match the selected columns."
+                    ),
                 )
-            if not isinstance(types, dict) or not types:
-                raise ValueError("cast requires params.types: {col: type, ...}")
 
             on_error = p.get("on_error", "fail")
             if on_error not in {"fail", "null", "keep"}:
-                raise ValueError("cast params.on_error must be one of: fail, null, keep")
+                raise WowDataUserError(
+                    "E_CAST_ON_ERROR",
+                    "cast params.on_error must be one of: 'fail', 'null', 'keep'.",
+                    hint="Example: Transform('cast', params={'types': {...}, 'on_error': 'null'})",
+                )
 
             def _to_int(v: Any) -> Any:
                 if v is None:
@@ -386,9 +431,17 @@ class Transform:
             out = table
             for col, typ in types.items():
                 if not isinstance(col, str) or not col:
-                    raise ValueError("cast types keys must be non-empty strings")
+                    raise WowDataUserError(
+                        "E_CAST_KEY",
+                        "cast types keys must be non-empty strings.",
+                        hint="Example: {'age': 'integer', 'income': 'number'}",
+                    )
                 if not isinstance(typ, str) or typ not in converters:
-                    raise ValueError(f"Unsupported cast type for '{col}': {typ!r}")
+                    raise WowDataUserError(
+                        "E_CAST_TYPE",
+                        f"Unsupported cast type for '{col}': {typ!r}.",
+                        hint="Supported types: integer, number, boolean, string, date, datetime.",
+                    )
 
                 out = etl.convert(out, col, _wrap(converters[typ]))
 
@@ -399,7 +452,11 @@ class Transform:
             context.checkpoints.append(("validate", p))
             return table
 
-        raise NotImplementedError(f"Transform op '{op}' not implemented in v0 executor yet.")
+        raise WowDataUserError(
+            "E_OP_NOT_IMPL",
+            f"Transform op '{op}' is not implemented in v0 executor yet.",
+            hint="Implement it in Transform.apply, or restrict your pipeline to supported ops.",
+        )
 
     def __str__(self) -> str:
         return f"Transform(op={self.op}, params={self.params})"
