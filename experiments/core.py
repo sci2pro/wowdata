@@ -98,10 +98,10 @@ class Source:
     def peek_schema(self, *, sample_rows: int = 200, force: bool = False) -> Dict[str, Any]:
         """Infer a Frictionless-like schema from a bounded sample.
 
-         - Never loads full data.
-         - Uses Frictionless when available.
-         - Caches the inferred schema on the Source instance.
-         """
+        - Never loads full data.
+        - Uses Frictionless when available.
+        - Caches the inferred schema on the Source instance.
+        """
         if self._inferred_schema is not None and not force:
             return self._inferred_schema
 
@@ -168,7 +168,7 @@ class Source:
                                 if v is None:
                                     continue
                                 if isinstance(v, str) and v.strip() == "":
-                                   continue
+                                    continue
                                 nonempty_counts[h] += 1
                                 if _looks_number(v):
                                     numeric_counts[h] += 1
@@ -217,7 +217,7 @@ class Source:
                 if pairs:
                     sch += "  inferred={" + ", ".join(pairs[:8])
                     if len(pairs) > 8:
-                        sch += ", ..."
+                        sch += ", …"
                     sch += "}"
             warns = self._schema_warnings
             if warns:
@@ -264,9 +264,122 @@ class Transform:
             return etl.cutout(table, *cols)
 
         if op == "cast":
-            # v0: cast in PETL is usually via convert/convertall; real typing should be checked by frictionless validate.
-            # We'll implement a conservative cast later once we decide coercion rules.
-            return table
+            types = p.get("types")
+            if not isinstance(types, dict) or not types:
+                raise ValueError("cast requires params.types: {col: type, ...}")
+
+            on_error = p.get("on_error", "fail")
+            if on_error not in {"fail", "null", "keep"}:
+                raise ValueError("cast params.on_error must be one of: fail, null, keep")
+
+            def _to_int(v: Any) -> Any:
+                if v is None:
+                    return None
+                if isinstance(v, int):
+                    return v
+                if isinstance(v, float) and v.is_integer():
+                    return int(v)
+                if isinstance(v, str):
+                    s = v.strip()
+                    if s == "":
+                        return None
+                    return int(float(s))
+                return int(v)
+
+            def _to_number(v: Any) -> Any:
+                if v is None:
+                    return None
+                if isinstance(v, (int, float)):
+                    return float(v)
+                if isinstance(v, str):
+                    s = v.strip()
+                    if s == "":
+                        return None
+                    return float(s)
+                return float(v)
+
+            def _to_bool(v: Any) -> Any:
+                if v is None:
+                    return None
+                if isinstance(v, bool):
+                    return v
+                if isinstance(v, (int, float)):
+                    return bool(v)
+                if isinstance(v, str):
+                    s = v.strip().lower()
+                    if s in {"", "null", "none", "na", "nan"}:
+                        return None
+                    if s in {"true", "t", "yes", "y", "1"}:
+                        return True
+                    if s in {"false", "f", "no", "n", "0"}:
+                        return False
+                raise ValueError(f"Cannot coerce {v!r} to boolean")
+
+            def _to_str(v: Any) -> Any:
+                if v is None:
+                    return None
+                return str(v)
+
+            # date/datetime: keep conservative; expect ISO strings
+            from datetime import date, datetime
+
+            def _to_date(v: Any) -> Any:
+                if v is None:
+                    return None
+                if isinstance(v, date) and not isinstance(v, datetime):
+                    return v
+                if isinstance(v, datetime):
+                    return v.date()
+                if isinstance(v, str):
+                    s = v.strip()
+                    if s == "":
+                        return None
+                    return date.fromisoformat(s)
+                raise ValueError(f"Cannot coerce {v!r} to date")
+
+            def _to_datetime(v: Any) -> Any:
+                if v is None:
+                    return None
+                if isinstance(v, datetime):
+                    return v
+                if isinstance(v, str):
+                    s = v.strip()
+                    if s == "":
+                        return None
+                    return datetime.fromisoformat(s)
+                raise ValueError(f"Cannot coerce {v!r} to datetime")
+
+            converters = {
+                "integer": _to_int,
+                "number": _to_number,
+                "boolean": _to_bool,
+                "string": _to_str,
+                "date": _to_date,
+                "datetime": _to_datetime,
+            }
+
+            def _wrap(conv):
+                def f(v: Any) -> Any:
+                    try:
+                        return conv(v)
+                    except Exception:
+                        if on_error == "fail":
+                            raise
+                        if on_error == "null":
+                            return None
+                        return v  # keep
+                return f
+
+            out = table
+            for col, typ in types.items():
+                if not isinstance(col, str) or not col:
+                    raise ValueError("cast types keys must be non-empty strings")
+                if not isinstance(typ, str) or typ not in converters:
+                    raise ValueError(f"Unsupported cast type for '{col}': {typ!r}")
+
+                out = etl.convert(out, col, _wrap(converters[typ]))
+
+            return out
 
         if op == "validate":
             # runtime validation checkpoint (frictionless integration comes next)
