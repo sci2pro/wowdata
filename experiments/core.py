@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Tuple, Union, Optional
 
 import petl as etl
 
@@ -13,10 +13,6 @@ except Exception:  # pragma: no cover
     Detector = None
 
 FrictionlessSchema = Dict[str, Any]
-
-# --- WowDataUserError: instructional user-facing errors ---
-from typing import Optional
-
 
 class WowDataUserError(Exception):
     """An instructional error intended for end users.
@@ -53,12 +49,20 @@ def _normalize_inline_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     We keep it permissive for now.
     """
     if not isinstance(schema, dict):
-        raise TypeError("schema must be a dict")
+        raise WowDataUserError(
+            "E_SCHEMA_INLINE_TYPE",
+            "Inline schema must be a mapping (dict).",
+            hint="Example: {'fields': [{'name': 'age', 'type': 'integer'}]}",
+        )
     if "fields" not in schema:
         # allow passing full frictionless resource descriptor later; for now keep simple
         return {"fields": []}
     if not isinstance(schema["fields"], list):
-        raise TypeError("schema['fields'] must be a list")
+        raise WowDataUserError(
+            "E_SCHEMA_INLINE_FIELDS",
+            "Inline schema['fields'] must be a list.",
+            hint="Example: {'fields': [{'name': 'age', 'type': 'integer'}]}",
+        )
     return schema
 
 
@@ -81,13 +85,18 @@ class Source:
         object.__setattr__(self, "type", inferred)
 
         if self.type is None:
-            raise ValueError(
-                f"Could not infer Source type from uri='{self.uri}'. "
-                f"Provide type= explicitly (e.g., Source('file.txt', type='csv'))."
+            raise WowDataUserError(
+                "E_SOURCE_TYPE_INFER",
+                f"Could not infer Source type from uri='{self.uri}'.",
+                hint="Provide type explicitly, e.g. Source('file.txt', type='csv').",
             )
 
         if self.type != "csv":
-            raise NotImplementedError(f"Source type '{self.type}' not supported yet (v0 supports csv only).")
+            raise WowDataUserError(
+                "E_SOURCE_TYPE_UNSUPPORTED",
+                f"Source type '{self.type}' is not supported in v0.",
+                hint="Currently supported source types: csv.",
+            )
 
         if self.schema is not None and isinstance(self.schema, dict):
             _normalize_inline_schema(self.schema)
@@ -100,7 +109,11 @@ class Source:
         if self.type == "csv":
             # PETL fromcsv supports kwargs like delimiter, encoding, etc.
             return etl.fromcsv(self.uri, **self.options)
-        raise NotImplementedError(self.type)
+        raise WowDataUserError(
+            "E_SOURCE_TABLE_UNSUPPORTED",
+            f"Source type '{self.type}' cannot be materialized as a table in v0.",
+            hint="Currently supported source types: csv.",
+        )
 
     # ---------- Peepholes / inspection ----------
     def head(self, n: Optional[int] = None):
@@ -472,17 +485,29 @@ class Sink:
         inferred = self.type or _infer_type_from_uri(self.uri)
         object.__setattr__(self, "type", inferred)
         if self.type is None:
-            raise ValueError(f"Could not infer Sink type from uri='{self.uri}'. Provide type= explicitly.")
+            raise WowDataUserError(
+                "E_SINK_TYPE_INFER",
+                f"Could not infer Sink type from uri='{self.uri}'.",
+                hint="Provide type explicitly, e.g. Sink('out.data', type='csv').",
+            )
+
         if self.type != "csv":
-            # allow parquet later, etc.
-            raise NotImplementedError(f"Sink type '{self.type}' not supported yet (v0 supports csv only).")
+            raise WowDataUserError(
+                "E_SINK_TYPE_UNSUPPORTED",
+                f"Sink type '{self.type}' is not supported in v0.",
+                hint="Currently supported sink types: csv.",
+            )
 
     def write(self, table) -> None:
         if self.type == "csv":
             # PETL tocsv writes table to CSV
             etl.tocsv(table, self.uri, **self.options)
             return
-        raise NotImplementedError(self.type)
+        raise WowDataUserError(
+            "E_SINK_WRITE_UNSUPPORTED",
+            f"Sink type '{self.type}' cannot be written in v0.",
+            hint="Currently supported sink types: csv.",
+        )
 
     def __str__(self) -> str:
         return f'Sink("{self.uri}")  kind={self.type}'
@@ -504,7 +529,11 @@ class Pipeline:
 
     def then(self, step: Union[Transform, Sink]) -> "Pipeline":
         if not isinstance(step, (Transform, Sink)):
-            raise TypeError("Pipeline.then expects a Transform or Sink")
+            raise WowDataUserError(
+                "E_PIPELINE_STEP",
+                "Pipeline.then expects a Transform or Sink.",
+                hint="Example: pipe.then(Transform('select', params={...})) or pipe.then(Sink('out.csv')).",
+            )
         return Pipeline(self.start, self.steps + [step])
 
     def __str__(self) -> str:
@@ -523,6 +552,10 @@ class Pipeline:
             elif isinstance(step, Sink):
                 step.write(table)
             else:
-                raise RuntimeError("Unknown step type")
+                raise WowDataUserError(
+                    "E_PIPELINE_STEP_TYPE",
+                    "Pipeline contains an unknown step type.",
+                    hint="This should not happen if you only add Transform/Sink via Pipeline.then().",
+                )
 
         return ctx
