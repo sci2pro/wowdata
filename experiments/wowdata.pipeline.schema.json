@@ -1,0 +1,1299 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/wowdata/pipeline.schema.v0.json",
+  "title": "WowData Pipeline IR (v0 with op-specific validation)",
+  "type": "object",
+  "required": [
+    "nodes",
+    "edges"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "default": "0.1"
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/node"
+      }
+    },
+    "edges": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/edge"
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+    },
+    "edge": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        { "$ref":  "#/$defs/id" },
+        { "$ref":  "#/$defs/id" }
+      ],
+      "items": false
+    },
+    "column": {
+      "type": "string",
+      "minLength": 1
+    },
+    "columns": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/column"
+      }
+    },
+    "expr": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Expression string in the WowData v0 grammar (filter/compute)."
+    },
+    "datasetRef": {
+      "description": "Reference to another node id (source/transform output).",
+      "$ref": "#/$defs/id"
+    },
+    "spec": {
+      "type": "object",
+      "required": [
+        "uri"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "description": "Optional explicit type override (csv, xlsx, parquet, sql, s3, api...)."
+        },
+        "schema": {
+          "description": "Optional schema reference: path/URI or inline frictionless schema object.",
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "object",
+              "additionalProperties": true
+            }
+          ]
+        },
+        "options": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Connector-specific options (delimiter, sheet, creds ref, etc.)."
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "source",
+            "transform",
+            "sink"
+          ]
+        },
+        "spec": {
+          "$ref": "#/$defs/spec"
+        },
+        "op": {
+          "type": "string"
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "meta": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Optional metadata (labels, UI hints, notes)."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "source"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "spec"
+            ],
+            "properties": {
+              "op": false,
+              "params": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "sink"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "spec"
+            ],
+            "properties": {
+              "op": false,
+              "params": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "transform"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "op",
+              "params"
+            ],
+            "properties": {
+              "spec": false
+            },
+            "allOf": [
+              {
+                "$ref": "#/$defs/transformOpValidation"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "transformOpValidation": {
+      "description": "Op-by-op validation for Transform nodes.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "filter"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_filter"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "exclude"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_exclude"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "limit"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_limit"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "sample"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_sample"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "distinct"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_distinct"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "select"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_select"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "drop"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_drop"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "rename"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_rename"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "reorder"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_reorder"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "cast"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_cast"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "compute"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_compute"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "fill"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_fill"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "replace"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_replace"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "split"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_split"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "merge_columns"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_merge_columns"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "groupby_agg"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_groupby_agg"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "dedupe"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_dedupe"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "join"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_join"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "filter_in"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_filter_in"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "exclude_in"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_exclude_in"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "union"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_union"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "validate"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_validate"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "profile"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_profile"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "python"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_python"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          "then": {
+            "properties": {
+              "op": {
+                "enum": [
+                  "filter",
+                  "exclude",
+                  "limit",
+                  "sample",
+                  "distinct",
+                  "select",
+                  "drop",
+                  "rename",
+                  "reorder",
+                  "cast",
+                  "compute",
+                  "fill",
+                  "replace",
+                  "split",
+                  "merge_columns",
+                  "groupby_agg",
+                  "dedupe",
+                  "join",
+                  "filter_in",
+                  "exclude_in",
+                  "union",
+                  "validate",
+                  "profile",
+                  "python"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "params_filter": {
+      "type": "object",
+      "required": [
+        "where"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "where": {
+          "$ref": "#/$defs/expr"
+        }
+      }
+    },
+    "params_exclude": {
+      "type": "object",
+      "required": [
+        "where"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "where": {
+          "$ref": "#/$defs/expr"
+        }
+      }
+    },
+    "params_limit": {
+      "type": "object",
+      "required": [
+        "n"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "params_sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "n"
+          ],
+          "properties": {
+            "n": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "seed": {
+              "type": "integer"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "required": [
+            "frac"
+          ],
+          "properties": {
+            "frac": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            },
+            "seed": {
+              "type": "integer"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "params_distinct": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "by": {
+          "$ref": "#/$defs/columns"
+        }
+      }
+    },
+    "params_select": {
+      "type": "object",
+      "required": [
+        "columns"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "columns": {
+          "$ref": "#/$defs/columns"
+        }
+      }
+    },
+    "params_drop": {
+      "type": "object",
+      "required": [
+        "columns"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "columns": {
+          "$ref": "#/$defs/columns"
+        }
+      }
+    },
+    "params_rename": {
+      "type": "object",
+      "required": [
+        "mapping"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "mapping": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/column"
+          }
+        }
+      }
+    },
+    "params_reorder": {
+      "type": "object",
+      "required": [
+        "columns"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "columns": {
+          "$ref": "#/$defs/columns"
+        },
+        "rest": {
+          "type": "string",
+          "enum": [
+            "keep",
+            "drop"
+          ],
+          "default": "keep"
+        }
+      }
+    },
+    "frictionlessType": {
+      "type": "string",
+      "enum": [
+        "integer",
+        "number",
+        "string",
+        "boolean",
+        "date",
+        "datetime"
+      ]
+    },
+    "params_cast": {
+      "type": "object",
+      "required": [
+        "types"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "types": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/frictionlessType"
+          }
+        },
+        "on_error": {
+          "type": "string",
+          "enum": [
+            "fail",
+            "null",
+            "keep"
+          ],
+          "default": "fail"
+        }
+      }
+    },
+    "params_compute": {
+      "type": "object",
+      "required": [
+        "assign"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "assign": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/expr"
+          }
+        }
+      }
+    },
+    "fillStrategy": {
+      "type": "string",
+      "enum": [
+        "mean",
+        "median",
+        "mode",
+        "zero",
+        "ffill",
+        "bfill"
+      ]
+    },
+    "params_fill": {
+      "type": "object",
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "values"
+          ],
+          "properties": {
+            "values": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "required": [
+            "strategy"
+          ],
+          "properties": {
+            "strategy": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "$ref": "#/$defs/fillStrategy"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "params_replace": {
+      "type": "object",
+      "required": [
+        "column",
+        "mapping"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "column": {
+          "$ref": "#/$defs/column"
+        },
+        "mapping": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": true
+        },
+        "default": true
+      }
+    },
+    "params_split": {
+      "type": "object",
+      "required": [
+        "column",
+        "into"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "column": {
+          "$ref": "#/$defs/column"
+        },
+        "into": {
+          "$ref": "#/$defs/columns"
+        },
+        "sep": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pattern": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "sep",
+              "pattern"
+            ],
+            "description": "Use either sep or pattern, not both."
+          }
+        }
+      ]
+    },
+    "params_merge_columns": {
+      "type": "object",
+      "required": [
+        "columns",
+        "into"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "columns": {
+          "$ref": "#/$defs/columns"
+        },
+        "into": {
+          "$ref": "#/$defs/column"
+        },
+        "sep": {
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "aggFunc": {
+      "type": "string",
+      "pattern": "^(sum|mean|median|min|max|count|nunique)\\([A-Za-z_][A-Za-z0-9_]*\\)$|^count\\(\\*\\)$",
+      "description": "Aggregation function strings like mean(age), sum(amount), count(*)."
+    },
+    "params_groupby_agg": {
+      "type": "object",
+      "required": [
+        "by",
+        "agg"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "by": {
+          "$ref": "#/$defs/columns"
+        },
+        "agg": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/aggFunc"
+          }
+        }
+      }
+    },
+    "params_dedupe": {
+      "type": "object",
+      "required": [
+        "by"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "by": {
+          "$ref": "#/$defs/columns"
+        },
+        "keep": {
+          "type": "string",
+          "enum": [
+            "first",
+            "last"
+          ],
+          "default": "first"
+        },
+        "order_by": {
+          "$ref": "#/$defs/columns"
+        }
+      }
+    },
+    "keySpec": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/column"
+        },
+        {
+          "$ref": "#/$defs/columns"
+        }
+      ]
+    },
+    "params_join": {
+      "type": "object",
+      "required": [
+        "right",
+        "left_key",
+        "right_key"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "right": {
+          "$ref": "#/$defs/datasetRef"
+        },
+        "left_key": {
+          "$ref": "#/$defs/keySpec"
+        },
+        "right_key": {
+          "$ref": "#/$defs/keySpec"
+        },
+        "how": {
+          "type": "string",
+          "enum": [
+            "inner",
+            "left",
+            "right",
+            "outer"
+          ],
+          "default": "inner"
+        },
+        "suffixes": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "_left",
+            "_right"
+          ]
+        }
+      }
+    },
+    "params_filter_in": {
+      "type": "object",
+      "required": [
+        "right",
+        "left_key",
+        "right_key"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "right": {
+          "$ref": "#/$defs/datasetRef"
+        },
+        "left_key": {
+          "$ref": "#/$defs/keySpec"
+        },
+        "right_key": {
+          "$ref": "#/$defs/keySpec"
+        },
+        "distinct_right": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "params_exclude_in": {
+      "type": "object",
+      "required": [
+        "right",
+        "left_key",
+        "right_key"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "right": {
+          "$ref": "#/$defs/datasetRef"
+        },
+        "left_key": {
+          "$ref": "#/$defs/keySpec"
+        },
+        "right_key": {
+          "$ref": "#/$defs/keySpec"
+        }
+      }
+    },
+    "params_union": {
+      "type": "object",
+      "required": [
+        "others"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "others": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/datasetRef"
+          }
+        },
+        "align": {
+          "type": "string",
+          "enum": [
+            "strict",
+            "by_name"
+          ],
+          "default": "by_name"
+        },
+        "fill_missing": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "params_validate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "description": "Schema reference (uri/id) or inline frictionless schema.",
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "object",
+              "additionalProperties": true
+            }
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "level": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warn"
+          ],
+          "default": "error"
+        }
+      }
+    },
+    "params_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "columns": {
+          "$ref": "#/$defs/columns"
+        },
+        "sample": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "params_python": {
+      "type": "object",
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "code"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "inputs": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/datasetRef"
+              }
+            },
+            "outputs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "required": [
+            "module",
+            "callable"
+          ],
+          "properties": {
+            "module": {
+              "type": "string",
+              "minLength": 1
+            },
+            "callable": {
+              "type": "string",
+              "minLength": 1
+            },
+            "inputs": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/datasetRef"
+              }
+            },
+            "outputs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,40 @@
+nodes:
+    -   id: people
+        kind: source
+        spec: { uri: people.csv }
+    
+    -   id: eligible
+        kind: source
+        spec: { uri: eligible_ids.xlsx }
+    
+    -   id: t_filter_in
+        kind: transform
+        op: filter_in
+        params: { right: eligible, left_key: person_id, right_key: person_id }
+    
+    -   id: t_filter
+        kind: transform
+        op: filter
+        params: { where: 'age >= 30 and country == "KE"' }
+    
+    -   id: t_cast
+        kind: transform
+        op: cast
+        params: { types: { age: integer } }
+    
+    -   id: t_validate
+        kind: transform
+        op: validate
+        params: { }
+    
+    -   id: sink
+        kind: sink
+        spec: { uri: eligible_people.parquet }
+
+edges:
+    - [ people, t_filter_in ]
+    - [ eligible, t_filter_in ]   # second input
+    - [ t_filter_in, t_filter ]
+    - [ t_filter, t_cast ]
+    - [ t_cast, t_validate ]
+    - [ t_validate, sink ]

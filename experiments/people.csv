@@ -1,0 +1,11 @@
+person_id,name,age,country,occupation,income
+P001,Alice Mwangi,29,KE,Engineer,85000
+P002,John Kamau,34,KE,Teacher,42000
+P003,Mary Otieno,41,KE,Accountant,76000
+P004,David Smith,27,UK,Designer,54000
+P005,Grace Wanjiku,38,KE,Product Manager,98000
+P006,Peter Johnson,52,US,Consultant,120000
+P007,Sarah Njeri,31,KE,Data Analyst,67000
+P008,Michael Brown,45,UK,Architect,89000
+P009,Faith Achieng,23,KE,Student,0
+P010,James Oloo,60,KE,Retired,15000
