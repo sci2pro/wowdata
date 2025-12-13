@@ -183,7 +183,9 @@ class Source:
                                     frac = numeric_counts.get(h, 0) / max(ne, 1)
                                     if frac >= 0.8:
                                         warnings.append(
-                                            f"Column '{h}' inferred as string but {frac:.0%} of sampled values look numeric; consider cast(types={{'{h}': 'number'}})."
+                                            f"Column '{h}' inferred as string but {frac:.0%} of sampled values look numeric; "
+                                            "consider an explicit cast, e.g. "
+                                            f"cast(types={{'{h}': 'integer'}}) or cast(types={{'{h}': 'number'}})."
                                         )
                 except Exception as _e:
                     # Sampling heuristics are best-effort; don't fail schema inference
@@ -264,7 +266,17 @@ class Transform:
             return etl.cutout(table, *cols)
 
         if op == "cast":
+            header = list(etl.header(table))
             types = p.get("types")
+            missing = [c for c in types.keys() if c not in header]
+            if missing:
+                raise ValueError(
+                    "cast refers to column(s) not present in the current table: "
+                    f"{missing}. "
+                    "This usually happens if you applied select/drop before cast. "
+                    "Fix by moving cast earlier in the pipeline, or update cast.types "
+                    "to match the selected columns."
+                )
             if not isinstance(types, dict) or not types:
                 raise ValueError("cast requires params.types: {col: type, ...}")
 
@@ -368,6 +380,7 @@ class Transform:
                         if on_error == "null":
                             return None
                         return v  # keep
+
                 return f
 
             out = table
