@@ -285,13 +285,338 @@ class Transform:
         p = self.params
 
         if op == "filter":
-            # v0: string expressions will be compiled later.
-            # Here we keep a placeholder to wire the system; implement parsing next.
-            raise WowDataUserError(
-                "E_FILTER_NOT_IMPL",
-                "Transform('filter') execution is not implemented yet.",
-                hint="For now, use select/drop/cast/validate, or wait for the expression compiler.",
-            )
+            where = p.get("where")
+            if not isinstance(where, str) or not where.strip():
+                raise WowDataUserError(
+                    "E_FILTER_PARAMS",
+                    "filter requires params.where as a non-empty expression string.",
+                    hint="Example: Transform('filter', params={'where': "
+                         "\"age >= 30 and country == 'KE'\"})",
+                )
+
+            strict = p.get("strict", True)
+            if not isinstance(strict, bool):
+                raise WowDataUserError(
+                    "E_FILTER_PARAMS",
+                    "filter params.strict must be a boolean.",
+                    hint="Example: Transform('filter', params={'where': 'age >= 30', 'strict': true})",
+                )
+
+            columns = list(etl.header(table))
+            colset = set(columns)
+
+            import re
+            import difflib
+
+            # ---------------- Tokenizer ----------------
+            _re_ws = re.compile(r"\s+")
+            _re_ident = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+            _re_number = re.compile(r"(?:\d+\.\d*|\d*\.\d+|\d+)")
+
+            # Operators ordered longest-first
+            OPS = {"==", "!=", ">=", "<=", ">", "<", "(", ")"}
+            KEYWORDS = {"and", "or", "not", "true", "false", "null"}
+
+            class _Tok:
+                __slots__ = ("typ", "val", "pos")
+
+                def __init__(self, typ: str, val: Any, pos: int):
+                    self.typ = typ
+                    self.val = val
+                    self.pos = pos
+
+            def _tokenize(src: str) -> List[_Tok]:
+                out: List[_Tok] = []
+                i = 0
+                n = len(src)
+                while i < n:
+                    m = _re_ws.match(src, i)
+                    if m:
+                        i = m.end()
+                        continue
+
+                    # strings: single or double quoted, with basic escapes
+                    if src[i] in ("'", '"'):
+                        q = src[i]
+                        j = i + 1
+                        buf = []
+                        while j < n:
+                            ch = src[j]
+                            if ch == "\\" and j + 1 < n:
+                                buf.append(src[j + 1])
+                                j += 2
+                                continue
+                            if ch == q:
+                                out.append(_Tok("STR", "".join(buf), i))
+                                i = j + 1
+                                break
+                            buf.append(ch)
+                            j += 1
+                        else:
+                            raise WowDataUserError(
+                                "E_FILTER_PARSE",
+                                "Unterminated string literal in filter expression.",
+                                hint=src,
+                            )
+                        continue
+
+                    # operators
+                    two = src[i:i+2]
+                    if two in {"==", "!=", ">=", "<="}:
+                        out.append(_Tok("OP", two, i))
+                        i += 2
+                        continue
+                    if src[i] in {">", "<", "(", ")"}:
+                        out.append(_Tok("OP", src[i], i))
+                        i += 1
+                        continue
+
+                    # number
+                    m = _re_number.match(src, i)
+                    if m:
+                        s = m.group(0)
+                        out.append(_Tok("NUM", float(s) if ("." in s) else int(s), i))
+                        i = m.end()
+                        continue
+
+                    # identifier/keyword
+                    m = _re_ident.match(src, i)
+                    if m:
+                        s = m.group(0)
+                        low = s.lower()
+                        if low in KEYWORDS:
+                            out.append(_Tok("KW", low, i))
+                        else:
+                            out.append(_Tok("IDENT", s, i))
+                        i = m.end()
+                        continue
+
+                    raise WowDataUserError(
+                        "E_FILTER_PARSE",
+                        f"Unexpected character {src[i]!r} in filter expression.",
+                        hint=f"At position {i}: {src}\n" + (" " * i) + "^",
+                    )
+
+                out.append(_Tok("EOF", None, n))
+                return out
+
+            toks = _tokenize(where)
+            k = 0
+
+            def _peek() -> _Tok:
+                return toks[k]
+
+            def _eat(expected_typ: str, expected_val: Optional[str] = None) -> _Tok:
+                nonlocal k
+                t = toks[k]
+                if t.typ != expected_typ:
+                    raise WowDataUserError(
+                        "E_FILTER_PARSE",
+                        f"Expected {expected_typ} but found {t.typ}.",
+                        hint=f"At position {t.pos}: {where}\n" + (" " * t.pos) + "^",
+                    )
+                if expected_val is not None and t.val != expected_val:
+                    raise WowDataUserError(
+                        "E_FILTER_PARSE",
+                        f"Expected '{expected_val}' but found '{t.val}'.",
+                        hint=f"At position {t.pos}: {where}\n" + (" " * t.pos) + "^",
+                    )
+                k += 1
+                return t
+
+            # ---------------- Parser (precedence: not > cmp > and > or) ----------------
+            # AST nodes are tuples: (tag, ...)
+
+            def parse_expr():
+                return parse_or()
+
+            def parse_or():
+                node = parse_and()
+                while _peek().typ == "KW" and _peek().val == "or":
+                    _eat("KW", "or")
+                    rhs = parse_and()
+                    node = ("or", node, rhs)
+                return node
+
+            def parse_and():
+                node = parse_not()
+                while _peek().typ == "KW" and _peek().val == "and":
+                    _eat("KW", "and")
+                    rhs = parse_not()
+                    node = ("and", node, rhs)
+                return node
+
+            def parse_not():
+                if _peek().typ == "KW" and _peek().val == "not":
+                    _eat("KW", "not")
+                    inner = parse_not()
+                    return ("not", inner)
+                return parse_cmp()
+
+            def parse_cmp():
+                left = parse_atom()
+                if _peek().typ == "OP" and _peek().val in {"==", "!=", ">=", "<=", ">", "<"}:
+                    op_tok = _eat("OP")
+                    right = parse_atom()
+                    return ("cmp", op_tok.val, left, right)
+                return left
+
+            def parse_atom():
+                t = _peek()
+                if t.typ == "OP" and t.val == "(":
+                    _eat("OP", "(")
+                    node = parse_expr()
+                    _eat("OP", ")")
+                    return node
+                if t.typ == "IDENT":
+                    _eat("IDENT")
+                    return ("col", t.val, t.pos)
+                if t.typ == "NUM":
+                    _eat("NUM")
+                    return ("lit", t.val)
+                if t.typ == "STR":
+                    _eat("STR")
+                    return ("lit", t.val)
+                if t.typ == "KW":
+                    if t.val in {"true", "false", "null"}:
+                        _eat("KW")
+                        if t.val == "true":
+                            return ("lit", True)
+                        if t.val == "false":
+                            return ("lit", False)
+                        return ("lit", None)
+                raise WowDataUserError(
+                    "E_FILTER_PARSE",
+                    f"Unexpected token '{t.val}' in filter expression.",
+                    hint=f"At position {t.pos}: {where}\n" + (" " * t.pos) + "^",
+                )
+
+            ast = parse_expr()
+            _eat("EOF")
+
+            # ---------------- Compile/eval ----------------
+            def _suggest(col: str) -> str:
+                matches = difflib.get_close_matches(col, columns, n=3, cutoff=0.6)
+                if matches:
+                    return f"Did you mean {matches[0]!r}?"
+                return "Available columns: " + ", ".join(columns)
+
+            idx_map = {name: i for i, name in enumerate(columns)}
+
+            def _get_col(row: Any, name: str, pos: int) -> Any:
+                if name not in colset:
+                    raise WowDataUserError(
+                        "E_FILTER_UNKNOWN_COL",
+                        f"Unknown column {name!r} in filter expression.",
+                        hint=_suggest(name),
+                    )
+
+                # record/dict-like rows
+                try:
+                    return row[name]
+                except Exception:
+                    pass
+
+                if isinstance(row, dict):
+                    return row.get(name)
+
+                # tuple/list rows
+                try:
+                    return row[idx_map[name]]
+                except Exception:
+                    return None
+
+            def _looks_number(v: Any) -> bool:
+                if v is None:
+                    return False
+                if isinstance(v, (int, float)):
+                    return True
+                if isinstance(v, str):
+                    s = v.strip()
+                    if s == "":
+                        return False
+                    try:
+                        float(s)
+                        return True
+                    except Exception:
+                        return False
+                return False
+
+            def _to_float(v: Any) -> float:
+                if isinstance(v, (int, float)):
+                    return float(v)
+                if isinstance(v, str):
+                    return float(v.strip())
+                return float(v)
+
+            def _eval(node, row: Any) -> Any:
+                tag = node[0] if isinstance(node, tuple) else None
+                if tag is None:
+                    return node
+                if tag == "lit":
+                    return node[1]
+                if tag == "col":
+                    _, name, pos = node
+                    return _get_col(row, name, pos)
+                if tag == "and":
+                    return bool(_eval(node[1], row)) and bool(_eval(node[2], row))
+                if tag == "or":
+                    return bool(_eval(node[1], row)) or bool(_eval(node[2], row))
+                if tag == "not":
+                    return not bool(_eval(node[1], row))
+                if tag == "cmp":
+                    _, opx, left, right = node
+                    a = _eval(left, row)
+                    b = _eval(right, row)
+
+                    # Null semantics: comparisons with None are False except ==/!=
+                    if opx in {"==", "!="}:
+                        return (a == b) if opx == "==" else (a != b)
+                    if a is None or b is None:
+                        return False
+
+                    # numeric coercion if both look numeric
+                    if _looks_number(a) and _looks_number(b):
+                        af = _to_float(a)
+                        bf = _to_float(b)
+                        if opx == ">":
+                            return af > bf
+                        if opx == ">=":
+                            return af >= bf
+                        if opx == "<":
+                            return af < bf
+                        if opx == "<=":
+                            return af <= bf
+
+                    # string-to-string comparisons
+                    if isinstance(a, str) and isinstance(b, str):
+                        if opx == ">":
+                            return a > b
+                        if opx == ">=":
+                            return a >= b
+                        if opx == "<":
+                            return a < b
+                        if opx == "<=":
+                            return a <= b
+
+                    if strict:
+                        raise WowDataUserError(
+                            "E_FILTER_TYPE",
+                            f"Type mismatch in filter comparison: {a!r} {opx} {b!r}.",
+                            hint="Consider applying Transform('cast', ...) earlier in the pipeline.",
+                        )
+                    return False
+
+                raise WowDataUserError(
+                    "E_FILTER_UNSUPPORTED",
+                    "Unsupported construct in filter expression.",
+                    hint="Use comparisons, and/or/not, literals, parentheses, and column names.",
+                )
+
+            # Filter directly on the PETL table. `etl.select` preserves the header and
+            # applies the predicate to data rows.
+            filtered = etl.select(table, lambda r: bool(_eval(ast, r)))
+            return filtered
 
         if op == "select":
             cols = p.get("columns")
