@@ -14,6 +14,7 @@ except Exception:  # pragma: no cover
 
 FrictionlessSchema = Dict[str, Any]
 
+
 class WowDataUserError(Exception):
     """An instructional error intended for end users.
 
@@ -234,6 +235,10 @@ class Source:
         object.__setattr__(self, "_schema_warnings", warnings)
         return sch
 
+    def schema_warnings(self) -> List[str]:
+        """Warnings produced during the last schema inference pass."""
+        return list(self._schema_warnings)
+
     def __str__(self) -> str:
         kind = self.type or "unknown"
         hdr = f'Source("{self.uri}")  kind={kind}'
@@ -271,7 +276,6 @@ class Source:
         return Pipeline(self).then(other)
 
 
-
 # ---------------- Transform implementation registry ----------------
 
 class TransformImpl:
@@ -297,7 +301,8 @@ class TransformImpl:
         )
 
     @classmethod
-    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[FrictionlessSchema]:
+    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[
+        FrictionlessSchema]:
         """Infer the output schema given an input schema.
 
         Return None if the schema cannot be determined statically.
@@ -400,7 +405,7 @@ class FilterTransform(TransformImpl):
                     continue
 
                 # operators
-                two = src[i : i + 2]
+                two = src[i: i + 2]
                 if two in {"==", "!=", ">=", "<="}:
                     out.append(_Tok("OP", two, i))
                     i += 2
@@ -644,7 +649,8 @@ class FilterTransform(TransformImpl):
         return etl.select(table, lambda r: bool(_eval(ast, r)))
 
     @classmethod
-    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[FrictionlessSchema]:
+    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[
+        FrictionlessSchema]:
         # filtering does not change schema
         return input_schema
 
@@ -667,7 +673,8 @@ class SelectTransform(TransformImpl):
         return etl.cut(table, *cols)
 
     @classmethod
-    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[FrictionlessSchema]:
+    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[
+        FrictionlessSchema]:
         if not input_schema or "fields" not in input_schema:
             return input_schema
         cols = params.get("columns") or []
@@ -693,7 +700,8 @@ class DropTransform(TransformImpl):
         return etl.cutout(table, *cols)
 
     @classmethod
-    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[FrictionlessSchema]:
+    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[
+        FrictionlessSchema]:
         if not input_schema or "fields" not in input_schema:
             return input_schema
         drop_cols = set(params.get("columns") or [])
@@ -854,7 +862,8 @@ class CastTransform(TransformImpl):
         return out
 
     @classmethod
-    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[FrictionlessSchema]:
+    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[
+        FrictionlessSchema]:
         if not input_schema or "fields" not in input_schema:
             return input_schema
         types = params.get("types") or {}
@@ -993,3 +1002,23 @@ class Pipeline:
                 )
 
         return ctx
+
+    def schema(self, *, sample_rows: int = 200, force: bool = False) -> Optional[FrictionlessSchema]:
+        """Infer the pipeline's output schema without executing the full pipeline.
+
+        - Uses Source.peek_schema() (bounded sample, Frictionless when available)
+        - Applies each Transform's output_schema(...) in order
+        - Returns None if it cannot be determined statically
+        """
+        sch: Optional[FrictionlessSchema] = self.start.peek_schema(sample_rows=sample_rows, force=force)
+
+        for step in self.steps:
+            if isinstance(step, Transform):
+                sch = step.output_schema(sch)
+            elif isinstance(step, Sink):
+                # sinks don't change schema
+                continue
+            else:
+                return None  # should be unreachable
+
+        return sch

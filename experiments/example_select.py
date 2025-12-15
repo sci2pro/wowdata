@@ -8,5 +8,5 @@ pipe = Pipeline(s).then(
     Sink("out_select.csv")
 )
 
-print(pipe)
+print(pipe.schema())
 pipe.run()
