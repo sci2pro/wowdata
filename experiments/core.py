@@ -288,7 +288,7 @@ class TransformImpl:
     op: str = ""
 
     @classmethod
-    def validate_params(cls, params: Dict[str, Any]) -> None:
+    def validate_params(cls, params: Dict[str, Any], input_schema: Optional[FrictionlessSchema] = None) -> None:
         # default: no validation
         return
 
@@ -327,7 +327,7 @@ def register_transform(op: str) -> Callable[[Type[TransformImpl]], Type[Transfor
 @register_transform("filter")
 class FilterTransform(TransformImpl):
     @classmethod
-    def validate_params(cls, params: Dict[str, Any]) -> None:
+    def validate_params(cls, params: Dict[str, Any], input_schema: Optional[FrictionlessSchema] = None) -> None:
         where = params.get("where")
         if not isinstance(where, str) or not where.strip():
             raise WowDataUserError(
@@ -658,7 +658,7 @@ class FilterTransform(TransformImpl):
 @register_transform("select")
 class SelectTransform(TransformImpl):
     @classmethod
-    def validate_params(cls, params: Dict[str, Any]) -> None:
+    def validate_params(cls, params: Dict[str, Any], input_schema: Optional[FrictionlessSchema] = None) -> None:
         cols = params.get("columns")
         if not isinstance(cols, list) or not cols:
             raise WowDataUserError(
@@ -666,6 +666,18 @@ class SelectTransform(TransformImpl):
                 "select requires params.columns as a non-empty list of column names.",
                 hint="Example: Transform('select', params={'columns': ['person_id', 'age']})",
             )
+
+        if input_schema and isinstance(input_schema, dict):
+            fields = input_schema.get("fields")
+            if isinstance(fields, list) and fields:
+                names = {f.get("name") for f in fields if isinstance(f, dict)}
+                missing = [c for c in cols if c not in names]
+                if missing:
+                    raise WowDataUserError(
+                        "E_SELECT_UNKNOWN_COL",
+                        "select refers to column(s) not present in the current schema: " + str(missing) + ".",
+                        hint="Check spelling/case, or apply select after a transform that introduces these columns.",
+                    )
 
     @classmethod
     def apply(cls, table, *, params: Dict[str, Any], context: "PipelineContext"):
@@ -685,7 +697,7 @@ class SelectTransform(TransformImpl):
 @register_transform("drop")
 class DropTransform(TransformImpl):
     @classmethod
-    def validate_params(cls, params: Dict[str, Any]) -> None:
+    def validate_params(cls, params: Dict[str, Any], input_schema: Optional[FrictionlessSchema] = None) -> None:
         cols = params.get("columns")
         if not isinstance(cols, list) or not cols:
             raise WowDataUserError(
@@ -693,6 +705,18 @@ class DropTransform(TransformImpl):
                 "drop requires params.columns as a non-empty list of column names.",
                 hint="Example: Transform('drop', params={'columns': ['debug_col']})",
             )
+
+        if input_schema and isinstance(input_schema, dict):
+            fields = input_schema.get("fields")
+            if isinstance(fields, list) and fields:
+                names = {f.get("name") for f in fields if isinstance(f, dict)}
+                missing = [c for c in cols if c not in names]
+                if missing:
+                    raise WowDataUserError(
+                        "E_DROP_UNKNOWN_COL",
+                        "drop refers to column(s) not present in the current schema: " + str(missing) + ".",
+                        hint="Check spelling/case, or drop after a transform that introduces these columns.",
+                    )
 
     @classmethod
     def apply(cls, table, *, params: Dict[str, Any], context: "PipelineContext"):
@@ -712,7 +736,7 @@ class DropTransform(TransformImpl):
 @register_transform("cast")
 class CastTransform(TransformImpl):
     @classmethod
-    def validate_params(cls, params: Dict[str, Any]) -> None:
+    def validate_params(cls, params: Dict[str, Any], input_schema: Optional[FrictionlessSchema] = None) -> None:
         types = params.get("types")
         if not isinstance(types, dict) or not types:
             raise WowDataUserError(
@@ -905,7 +929,7 @@ class Transform:
                 hint="Supported ops: " + ", ".join(sorted(TRANSFORM_REGISTRY.keys())),
             )
 
-        impl.validate_params(self.params)
+        impl.validate_params(self.params, input_schema=getattr(context, "schema", None))
         return impl.apply(table, params=self.params, context=context)
 
     def output_schema(self, input_schema: Optional[FrictionlessSchema]) -> Optional[FrictionlessSchema]:
@@ -959,6 +983,7 @@ class Sink:
 @dataclass
 class PipelineContext:
     checkpoints: List[Tuple[str, Dict[str, Any]]] = field(default_factory=list)
+    schema: Optional[FrictionlessSchema] = None
     # later: frictionless reports, timing, rowcounts, etc.
 
 
@@ -987,11 +1012,14 @@ class Pipeline:
 
     def run(self) -> PipelineContext:
         ctx = PipelineContext()
+        ctx.schema = self.start.peek_schema()
         table = self.start.table()
 
         for step in self.steps:
             if isinstance(step, Transform):
                 table = step.apply(table, context=ctx)
+                # keep a best-effort running schema for better validation and UI
+                ctx.schema = step.output_schema(ctx.schema)
             elif isinstance(step, Sink):
                 step.write(table)
             else:
@@ -1002,7 +1030,6 @@ class Pipeline:
                 )
 
         return ctx
-
     def schema(self, *, sample_rows: int = 200, force: bool = False) -> Optional[FrictionlessSchema]:
         """Infer the pipeline's output schema without executing the full pipeline.
 
