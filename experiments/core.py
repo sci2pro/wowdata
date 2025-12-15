@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union, Optional, Type, Callable
+
 import petl as etl
 
 try:
@@ -63,6 +65,49 @@ def _normalize_inline_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
             hint="Example: {'fields': [{'name': 'age', 'type': 'integer'}]}",
         )
     return schema
+
+
+def _source_from_descriptor(desc: Union[str, Dict[str, Any]]) -> Source:
+    """Create a Source from a descriptor.
+
+    Supported forms:
+      - string URI: "file.csv"
+      - mapping: {"uri": "file.csv", "type": "csv", "schema": {...}, "options": {...}}
+    """
+    if isinstance(desc, str):
+        return Source(desc)
+    if isinstance(desc, dict):
+        uri = desc.get("uri")
+        if not isinstance(uri, str) or not uri:
+            raise WowDataUserError(
+                "E_JOIN_RIGHT",
+                "join params.right mapping must include a non-empty 'uri' string.",
+                hint="Example: {'uri': 'other.csv', 'type': 'csv', 'options': {...}}",
+            )
+        return Source(
+            uri,
+            type=desc.get("type"),
+            schema=desc.get("schema"),
+            options=desc.get("options") or {},
+        )
+    raise WowDataUserError(
+        "E_JOIN_RIGHT",
+        "join params.right must be a URI string or a mapping descriptor.",
+        hint="Example: Transform('join', params={'right': 'other.csv', 'on': ['id']})",
+    )
+
+
+def _schema_field_names(schema: Optional[FrictionlessSchema]) -> List[str]:
+    if not schema or not isinstance(schema, dict):
+        return []
+    fields = schema.get("fields")
+    if not isinstance(fields, list):
+        return []
+    out: List[str] = []
+    for f in fields:
+        if isinstance(f, dict) and isinstance(f.get("name"), str):
+            out.append(f["name"])
+    return out
 
 
 @dataclass(frozen=True)
@@ -1028,6 +1073,7 @@ class Pipeline:
                 )
 
         return ctx
+
     def schema(self, *, sample_rows: int = 200, force: bool = False) -> Optional[FrictionlessSchema]:
         """Infer the pipeline's output schema without executing the full pipeline.
 
@@ -1047,6 +1093,7 @@ class Pipeline:
                 return None  # should be unreachable
 
         return sch
+
 
 @register_transform("derive")
 class DeriveTransform(TransformImpl):
@@ -1166,7 +1213,7 @@ class DeriveTransform(TransformImpl):
                     continue
 
                 # operators (longest-first)
-                two = src[i : i + 2]
+                two = src[i: i + 2]
                 if two in {"==", "!=", ">=", "<="}:
                     out.append(_Tok("OP", two, i))
                     i += 2
@@ -1498,7 +1545,8 @@ class DeriveTransform(TransformImpl):
         return etl.addfield(table, new, lambda r: _eval(ast, r))
 
     @classmethod
-    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[FrictionlessSchema]:
+    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[
+        FrictionlessSchema]:
         if not input_schema or not isinstance(input_schema, dict):
             return input_schema
         fields = input_schema.get("fields")
@@ -1546,5 +1594,213 @@ class DeriveTransform(TransformImpl):
 
         if isinstance(new, str) and new.strip() and not replaced:
             out_fields.append({"name": new, "type": inferred_type})
+
+        return {"fields": out_fields}
+
+
+@register_transform("join")
+class JoinTransform(TransformImpl):
+    """Join the current table with a right-hand Source.
+
+    Params:
+      - right: str | {uri,type,schema,options}
+      - on: [col, ...]                     (same key names on both sides)
+        OR left_on: [..] and right_on: [..]
+      - how: 'inner' | 'left' | 'right' | 'full'   (default 'inner')
+      - suffix_right: str (default '_r')           (applied to right-side non-key collisions)
+    """
+
+    @classmethod
+    def validate_params(cls, params: Dict[str, Any], input_schema: Optional[FrictionlessSchema] = None) -> None:
+        right = params.get("right")
+        if right is None:
+            raise WowDataUserError(
+                "E_JOIN_PARAMS",
+                "join requires params.right (a URI string or Source descriptor mapping).",
+                hint="Example: Transform('join', params={'right': 'other.csv', 'on': ['id']})",
+            )
+
+        how = params.get("how", "inner")
+        if how not in {"inner", "left", "right", "full"}:
+            raise WowDataUserError(
+                "E_JOIN_PARAMS",
+                "join params.how must be one of: 'inner', 'left', 'right', 'full'.",
+                hint="Example: Transform('join', params={'right': 'other.csv', 'on': ['id'], 'how': 'left'})",
+            )
+
+        suffix_right = params.get("suffix_right", "_r")
+        if not isinstance(suffix_right, str):
+            raise WowDataUserError(
+                "E_JOIN_PARAMS",
+                "join params.suffix_right must be a string.",
+                hint="Example: Transform('join', params={'right': 'other.csv', 'on': ['id'], 'suffix_right': '_rhs'})",
+            )
+
+        on = params.get("on")
+        left_on = params.get("left_on")
+        right_on = params.get("right_on")
+
+        if on is not None:
+            if not isinstance(on, list) or not on or not all(isinstance(c, str) and c for c in on):
+                raise WowDataUserError(
+                    "E_JOIN_PARAMS",
+                    "join params.on must be a non-empty list of column names.",
+                    hint="Example: Transform('join', params={'right': 'other.csv', 'on': ['person_id']})",
+                )
+        else:
+            if not (isinstance(left_on, list) and isinstance(right_on, list) and left_on and right_on):
+                raise WowDataUserError(
+                    "E_JOIN_PARAMS",
+                    "join requires either params.on or both params.left_on and params.right_on.",
+                    hint="Example: Transform('join', params={'right': 'other.csv', 'left_on': ['id'], 'right_on': ['pid']})",
+                )
+            if len(left_on) != len(right_on):
+                raise WowDataUserError(
+                    "E_JOIN_PARAMS",
+                    "join params.left_on and params.right_on must have the same length.",
+                    hint="Example: left_on=['a','b'], right_on=['x','y']",
+                )
+            if not all(isinstance(c, str) and c for c in left_on + right_on):
+                raise WowDataUserError(
+                    "E_JOIN_PARAMS",
+                    "join key columns must be non-empty strings.",
+                    hint="Example: left_on=['id'], right_on=['person_id']",
+                )
+
+        # Early check: left keys exist in current schema if available
+        left_names = set(_schema_field_names(input_schema))
+        if left_names:
+            keys = on if on is not None else (left_on or [])
+            missing = [c for c in keys if c not in left_names]
+            if missing:
+                raise WowDataUserError(
+                    "E_JOIN_LEFT_KEYS",
+                    "join key column(s) not present in left schema: " + str(missing) + ".",
+                    hint="Check spelling/case, or cast/derive/select earlier so the join keys exist.",
+                )
+
+        # Validate right descriptor shape (do not read file here)
+        _ = _source_from_descriptor(right)
+
+    @classmethod
+    def apply(cls, table, *, params: Dict[str, Any], context: "PipelineContext"):
+        left_cols = list(etl.header(table))
+        left_colset = set(left_cols)
+
+        right_src = _source_from_descriptor(params.get("right"))
+        right_tbl = right_src.table()
+        right_cols = list(etl.header(right_tbl))
+        right_colset = set(right_cols)
+
+        on = params.get("on")
+        left_on = params.get("left_on")
+        right_on = params.get("right_on")
+        how = params.get("how", "inner")
+        suffix_right = params.get("suffix_right", "_r")
+
+        if on is not None:
+            left_keys = list(on)
+            right_keys = list(on)
+        else:
+            left_keys = list(left_on)
+            right_keys = list(right_on)
+
+        # Execution-time truth: key presence
+        missing_left = [c for c in left_keys if c not in left_colset]
+        if missing_left:
+            raise WowDataUserError(
+                "E_JOIN_LEFT_KEYS",
+                "join key column(s) not present in left table: " + str(missing_left) + ".",
+                hint="Inspect the left table header (print(Source(...))) and ensure keys exist.",
+            )
+        missing_right = [c for c in right_keys if c not in right_colset]
+        if missing_right:
+            raise WowDataUserError(
+                "E_JOIN_RIGHT_KEYS",
+                "join key column(s) not present in right table: " + str(missing_right) + ".",
+                hint="Inspect the right Source and ensure keys exist.",
+            )
+
+        # Avoid name collisions from right (except join keys)
+        collisions = (left_colset & right_colset) - set(right_keys)
+        if collisions:
+            rename_map = {c: f"{c}{suffix_right}" for c in collisions}
+            right_tbl = etl.rename(right_tbl, rename_map)
+
+        # Pick join fn based on how (petl naming varies by version)
+        if how == "inner":
+            join_fn = getattr(etl, "join", None)
+        elif how == "left":
+            join_fn = getattr(etl, "leftjoin", None)
+        elif how == "right":
+            join_fn = getattr(etl, "rightjoin", None)
+        else:
+            join_fn = getattr(etl, "outerjoin", None)
+
+        if join_fn is None:
+            raise WowDataUserError(
+                "E_JOIN_UNSUPPORTED",
+                "Your installed petl version does not provide the required join function.",
+                hint="Upgrade petl, or use how='inner' if only etl.join is available.",
+            )
+
+        # If key names match, use petl key directly
+        if left_keys == right_keys:
+            key = left_keys if len(left_keys) > 1 else left_keys[0]
+            return join_fn(table, right_tbl, key=key)
+
+        # If key names differ, join via a temporary synthetic key
+        tmp = "__wow_join_key__"
+        if tmp in left_colset or tmp in right_colset:
+            tmp = "__wow_join_key2__"
+
+        def _mk_key(row, cols: List[str]):
+            if len(cols) == 1:
+                return row[cols[0]]
+            return tuple(row[c] for c in cols)
+
+        left2 = etl.addfield(table, tmp, lambda r: _mk_key(r, left_keys))
+        right2 = etl.addfield(right_tbl, tmp, lambda r: _mk_key(r, right_keys))
+
+        joined = join_fn(left2, right2, key=tmp)
+        return etl.cutout(joined, tmp)
+
+    @classmethod
+    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[
+        FrictionlessSchema]:
+        # Best-effort: merge left schema with inferred right schema (bounded inference).
+        left_fields = []
+        if input_schema and isinstance(input_schema, dict):
+            left_fields = [f for f in (input_schema.get("fields") or []) if isinstance(f, dict)]
+
+        try:
+            right_src = _source_from_descriptor(params.get("right"))
+            right_schema = right_src.peek_schema()
+        except Exception:
+            right_schema = {"fields": []}
+
+        right_fields = [f for f in (right_schema.get("fields") or []) if isinstance(f, dict)]
+
+        on = params.get("on")
+        right_on = params.get("right_on")
+        suffix_right = params.get("suffix_right", "_r")
+
+        right_key_names = set(on) if on is not None else set(right_on or [])
+
+        left_names = {f.get("name") for f in left_fields if isinstance(f.get("name"), str)}
+        out_fields: List[Dict[str, Any]] = [dict(f) for f in left_fields]
+
+        for f in right_fields:
+            name = f.get("name")
+            if not isinstance(name, str):
+                continue
+            if name in right_key_names and name in left_names:
+                continue
+            if name in left_names:
+                rf = dict(f)
+                rf["name"] = f"{name}{suffix_right}"
+                out_fields.append(rf)
+            else:
+                out_fields.append(dict(f))
 
         return {"fields": out_fields}
