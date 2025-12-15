@@ -4,7 +4,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union, Optional, Type, Callable
 
+
 import petl as etl
+
+try:
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover
+    yaml = None
 
 try:
     from frictionless import Resource, Detector
@@ -108,6 +114,100 @@ def _schema_field_names(schema: Optional[FrictionlessSchema]) -> List[str]:
         if isinstance(f, dict) and isinstance(f.get("name"), str):
             out.append(f["name"])
     return out
+
+
+def _source_to_ir(src: Source) -> Dict[str, Any]:
+    d: Dict[str, Any] = {"uri": src.uri}
+    if src.type is not None:
+        d["type"] = src.type
+    if src.schema is not None:
+        d["schema"] = src.schema
+    if src.options:
+        d["options"] = dict(src.options)
+    return d
+
+
+def _sink_to_ir(sink: Sink) -> Dict[str, Any]:
+    d: Dict[str, Any] = {"uri": sink.uri}
+    if sink.type is not None:
+        d["type"] = sink.type
+    if sink.options:
+        d["options"] = dict(sink.options)
+    return d
+
+
+def _transform_to_ir(t: Transform) -> Dict[str, Any]:
+    d: Dict[str, Any] = {"op": t.op}
+    if t.params:
+        d["params"] = dict(t.params)
+    return d
+
+
+def _source_from_ir(d: Dict[str, Any]) -> Source:
+    if not isinstance(d, dict):
+        raise WowDataUserError(
+            "E_IR_SOURCE",
+            "IR source must be a mapping.",
+            hint="Example: start: {uri: people.csv, type: csv}",
+        )
+    uri = d.get("uri")
+    if not isinstance(uri, str) or not uri:
+        raise WowDataUserError(
+            "E_IR_SOURCE",
+            "IR source requires a non-empty 'uri' string.",
+            hint="Example: start: {uri: people.csv}",
+        )
+    return Source(
+        uri,
+        type=d.get("type"),
+        schema=d.get("schema"),
+        options=d.get("options") or {},
+    )
+
+
+def _sink_from_ir(d: Dict[str, Any]) -> Sink:
+    if not isinstance(d, dict):
+        raise WowDataUserError(
+            "E_IR_SINK",
+            "IR sink must be a mapping.",
+            hint="Example: {sink: {uri: out.csv}}",
+        )
+    uri = d.get("uri")
+    if not isinstance(uri, str) or not uri:
+        raise WowDataUserError(
+            "E_IR_SINK",
+            "IR sink requires a non-empty 'uri' string.",
+            hint="Example: {sink: {uri: out.csv}}",
+        )
+    return Sink(
+        uri,
+        type=d.get("type"),
+        options=d.get("options") or {},
+    )
+
+
+def _transform_from_ir(d: Dict[str, Any]) -> Transform:
+    if not isinstance(d, dict):
+        raise WowDataUserError(
+            "E_IR_TRANSFORM",
+            "IR transform must be a mapping.",
+            hint="Example: {transform: {op: select, params: {columns: [a,b]}}}",
+        )
+    op = d.get("op")
+    if not isinstance(op, str) or not op:
+        raise WowDataUserError(
+            "E_IR_TRANSFORM",
+            "IR transform requires a non-empty 'op' string.",
+            hint="Example: {transform: {op: filter, params: {where: \"…\"}}}",
+        )
+    params = d.get("params") or {}
+    if not isinstance(params, dict):
+        raise WowDataUserError(
+            "E_IR_TRANSFORM",
+            "IR transform 'params' must be a mapping.",
+            hint="Example: params: {where: \"…\"}",
+        )
+    return Transform(op, params=dict(params))
 
 
 @dataclass(frozen=True)
@@ -1094,6 +1194,122 @@ class Pipeline:
 
         return sch
 
+    def to_ir(self) -> Dict[str, Any]:
+        """Serialize this pipeline to a YAML-friendly IR (dict)."""
+        steps_ir: List[Dict[str, Any]] = []
+        for s in self.steps:
+            if isinstance(s, Transform):
+                steps_ir.append({"transform": _transform_to_ir(s)})
+            elif isinstance(s, Sink):
+                steps_ir.append({"sink": _sink_to_ir(s)})
+            else:
+                raise WowDataUserError(
+                    "E_IR_STEP",
+                    "Pipeline contains an unknown step type; cannot serialize.",
+                    hint="Only Transform and Sink steps are supported.",
+                )
+
+        return {
+            "wowdata": 0,
+            "pipeline": {
+                "start": _source_to_ir(self.start),
+                "steps": steps_ir,
+            },
+        }
+
+    @classmethod
+    def from_ir(cls, ir: Dict[str, Any]) -> "Pipeline":
+        """Deserialize a pipeline from IR (dict)."""
+        if not isinstance(ir, dict):
+            raise WowDataUserError(
+                "E_IR_ROOT",
+                "IR must be a mapping at the root.",
+                hint="Expected keys: wowdata, pipeline.",
+            )
+        version = ir.get("wowdata")
+        if version != 0:
+            raise WowDataUserError(
+                "E_IR_VERSION",
+                f"Unsupported IR version: {version!r}.",
+                hint="Supported: wowdata: 0",
+            )
+        pipe = ir.get("pipeline")
+        if not isinstance(pipe, dict):
+            raise WowDataUserError(
+                "E_IR_PIPELINE",
+                "IR requires a 'pipeline' mapping.",
+                hint="Example: {wowdata: 0, pipeline: {start: {...}, steps: [...]}}",
+            )
+
+        start = _source_from_ir(pipe.get("start") or {})
+        steps = pipe.get("steps") or []
+        if not isinstance(steps, list):
+            raise WowDataUserError(
+                "E_IR_STEPS",
+                "IR pipeline.steps must be a list.",
+                hint="Example: steps: [{transform: {...}}, {sink: {...}}]",
+            )
+
+        out = Pipeline(start)
+        for i, item in enumerate(steps):
+            if not isinstance(item, dict) or len(item) != 1:
+                raise WowDataUserError(
+                    "E_IR_STEP",
+                    f"IR step #{i} must be a mapping with exactly one key: 'transform' or 'sink'.",
+                    hint=str(item),
+                )
+            if "transform" in item:
+                out = out.then(_transform_from_ir(item["transform"]))
+            elif "sink" in item:
+                out = out.then(_sink_from_ir(item["sink"]))
+            else:
+                raise WowDataUserError(
+                    "E_IR_STEP",
+                    f"IR step #{i} must be 'transform' or 'sink'.",
+                    hint="Example: {transform: {op: select, params: {...}}}",
+                )
+
+        return out
+
+    def to_yaml(self) -> str:
+        """Dump IR to YAML string."""
+        if yaml is None:
+            raise WowDataUserError(
+                "E_YAML_IMPORT",
+                "PyYAML is not available; cannot serialize to YAML.",
+                hint="Install dependency: pip install pyyaml",
+            )
+        return yaml.safe_dump(self.to_ir(), sort_keys=False)
+
+    @classmethod
+    def from_yaml(cls, text: str) -> "Pipeline":
+        """Load pipeline from YAML string."""
+        if yaml is None:
+            raise WowDataUserError(
+                "E_YAML_IMPORT",
+                "PyYAML is not available; cannot parse YAML.",
+                hint="Install dependency: pip install pyyaml",
+            )
+        try:
+            ir = yaml.safe_load(text)
+        except Exception as e:
+            raise WowDataUserError(
+                "E_YAML_PARSE",
+                f"Failed to parse YAML: {e}",
+                hint="Check indentation and quoting.",
+            )
+        return cls.from_ir(ir)
+
+    def save_yaml(self, path: Union[str, Path]) -> None:
+        """Write YAML IR to a file."""
+        p = Path(path)
+        p.write_text(self.to_yaml(), encoding="utf-8")
+
+    @classmethod
+    def load_yaml(cls, path: Union[str, Path]) -> "Pipeline":
+        """Load YAML IR from a file."""
+        p = Path(path)
+        return cls.from_yaml(p.read_text(encoding="utf-8"))
 
 @register_transform("derive")
 class DeriveTransform(TransformImpl):

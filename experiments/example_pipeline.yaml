@@ -1,0 +1,20 @@
+wowdata: 0
+pipeline:
+    start:
+        uri: people.csv
+        type: csv
+    steps:
+        -   transform:
+                op: filter
+                params:
+                    where: "age >= 30"
+        -   transform:
+                op: join
+                params:
+                    right: countries.csv
+                    left_on: [ country ]
+                    right_on: [ country_code ]
+                    how: left
+        -   sink:
+                uri: out.csv
+                type: csv
