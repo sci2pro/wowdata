@@ -2,7 +2,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union, Optional, Type, Callable
-
 import petl as etl
 
 try:
@@ -1484,16 +1483,17 @@ class DeriveTransform(TransformImpl):
         if new in colset:
             # Recompute the entire row with the new column value replaced.
             def _row_with_replaced(r: Tuple[Any, ...]):
-                # r is a tuple row (no header)
                 val = _eval(ast, r)
                 i = idx_map[new]
                 rr = list(r)
                 rr[i] = val
                 return tuple(rr)
 
-            data_only = etl.select(table, lambda _r: True)
-            # Build new table by replacing the data rows; header remains the same
-            return etl.stack([etl.header(table)], etl.rowmap(data_only, _row_with_replaced))
+            header_row = [columns]
+            header_tbl = etl.wrap(header_row)
+            data_tbl = etl.skip(table, 1)
+            mapped_tbl = etl.rowmap(data_tbl, _row_with_replaced, header=columns)
+            return etl.stack(header_tbl, mapped_tbl)
 
         return etl.addfield(table, new, lambda r: _eval(ast, r))
 
@@ -1534,11 +1534,11 @@ class DeriveTransform(TransformImpl):
         replaced = False
         for f in fields:
             if isinstance(f, dict) and f.get("name") == new:
+                replaced = True
                 if overwrite:
                     nf = dict(f)
                     nf["type"] = inferred_type
                     out_fields.append(nf)
-                    replaced = True
                 else:
                     out_fields.append(f)
                 continue
