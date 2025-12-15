@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union, Optional, Type, Callable
@@ -1049,3 +1048,503 @@ class Pipeline:
                 return None  # should be unreachable
 
         return sch
+
+@register_transform("derive")
+class DeriveTransform(TransformImpl):
+    @classmethod
+    def validate_params(cls, params: Dict[str, Any], input_schema: Optional[FrictionlessSchema] = None) -> None:
+        new = params.get("new")
+        expr = params.get("expr")
+        overwrite = params.get("overwrite", False)
+        strict = params.get("strict", True)
+
+        if not isinstance(new, str) or not new.strip():
+            raise WowDataUserError(
+                "E_DERIVE_PARAMS",
+                "derive requires params.new as a non-empty column name string.",
+                hint="Example: Transform('derive', params={'new': 'is_adult', 'expr': 'age >= 18'})",
+            )
+        if not isinstance(expr, str) or not expr.strip():
+            raise WowDataUserError(
+                "E_DERIVE_PARAMS",
+                "derive requires params.expr as a non-empty expression string.",
+                hint="Example: Transform('derive', params={'new': 'is_adult', 'expr': 'age >= 18'})",
+            )
+        if not isinstance(overwrite, bool):
+            raise WowDataUserError(
+                "E_DERIVE_PARAMS",
+                "derive params.overwrite must be a boolean.",
+                hint="Example: Transform('derive', params={'new': 'x', 'expr': '1', 'overwrite': true})",
+            )
+        if not isinstance(strict, bool):
+            raise WowDataUserError(
+                "E_DERIVE_PARAMS",
+                "derive params.strict must be a boolean.",
+                hint="Example: Transform('derive', params={'new': 'x', 'expr': 'a / b', 'strict': false})",
+            )
+
+        # Early schema-aware check for overwrite policy
+        if input_schema and isinstance(input_schema, dict):
+            fields = input_schema.get("fields")
+            if isinstance(fields, list) and fields:
+                names = {f.get("name") for f in fields if isinstance(f, dict)}
+                if (new in names) and not overwrite:
+                    raise WowDataUserError(
+                        "E_DERIVE_EXISTS",
+                        f"derive would create column '{new}' but it already exists in the current schema.",
+                        hint="Set params.overwrite=true to replace it, or choose a different params.new.",
+                    )
+
+    @classmethod
+    def apply(cls, table, *, params: Dict[str, Any], context: "PipelineContext"):
+        new = params.get("new")
+        expr = params.get("expr")
+        overwrite = params.get("overwrite", False)
+        strict = params.get("strict", True)
+
+        columns = list(etl.header(table))
+        colset = set(columns)
+        idx_map = {name: i for i, name in enumerate(columns)}
+
+        if (new in colset) and not overwrite:
+            raise WowDataUserError(
+                "E_DERIVE_EXISTS",
+                f"derive would create column '{new}' but it already exists.",
+                hint="Set params.overwrite=true to replace it, or choose a different params.new.",
+            )
+
+        import re
+        import difflib
+
+        # ---------------- Tokenizer ----------------
+        _re_ws = re.compile(r"\s+")
+        _re_ident = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+        _re_number = re.compile(r"(?:\d+\.\d*|\d*\.\d+|\d+)")
+
+        KEYWORDS = {"and", "or", "not", "true", "false", "null"}
+
+        class _Tok:
+            __slots__ = ("typ", "val", "pos")
+
+            def __init__(self, typ: str, val: Any, pos: int):
+                self.typ = typ
+                self.val = val
+                self.pos = pos
+
+        def _tokenize(src: str) -> List[_Tok]:
+            out: List[_Tok] = []
+            i = 0
+            n = len(src)
+            while i < n:
+                m = _re_ws.match(src, i)
+                if m:
+                    i = m.end()
+                    continue
+
+                # strings: single or double quoted, with basic escapes
+                if src[i] in ("'", '"'):
+                    q = src[i]
+                    j = i + 1
+                    buf = []
+                    while j < n:
+                        ch = src[j]
+                        if ch == "\\" and j + 1 < n:
+                            buf.append(src[j + 1])
+                            j += 2
+                            continue
+                        if ch == q:
+                            out.append(_Tok("STR", "".join(buf), i))
+                            i = j + 1
+                            break
+                        buf.append(ch)
+                        j += 1
+                    else:
+                        raise WowDataUserError(
+                            "E_DERIVE_PARSE",
+                            "Unterminated string literal in derive expression.",
+                            hint=src,
+                        )
+                    continue
+
+                # operators (longest-first)
+                two = src[i : i + 2]
+                if two in {"==", "!=", ">=", "<="}:
+                    out.append(_Tok("OP", two, i))
+                    i += 2
+                    continue
+
+                if src[i] in {">", "<", "(", ")", "+", "-", "*", "/"}:
+                    out.append(_Tok("OP", src[i], i))
+                    i += 1
+                    continue
+
+                # number
+                m = _re_number.match(src, i)
+                if m:
+                    s = m.group(0)
+                    out.append(_Tok("NUM", float(s) if ("." in s) else int(s), i))
+                    i = m.end()
+                    continue
+
+                # identifier/keyword
+                m = _re_ident.match(src, i)
+                if m:
+                    s = m.group(0)
+                    low = s.lower()
+                    if low in KEYWORDS:
+                        out.append(_Tok("KW", low, i))
+                    else:
+                        out.append(_Tok("IDENT", s, i))
+                    i = m.end()
+                    continue
+
+                raise WowDataUserError(
+                    "E_DERIVE_PARSE",
+                    f"Unexpected character {src[i]!r} in derive expression.",
+                    hint=f"At position {i}: {src}\n" + (" " * i) + "^",
+                )
+
+            out.append(_Tok("EOF", None, n))
+            return out
+
+        toks = _tokenize(expr)
+        k = 0
+
+        def _peek() -> _Tok:
+            return toks[k]
+
+        def _eat(expected_typ: str, expected_val: Optional[str] = None) -> _Tok:
+            nonlocal k
+            t = toks[k]
+            if t.typ != expected_typ:
+                raise WowDataUserError(
+                    "E_DERIVE_PARSE",
+                    f"Expected {expected_typ} but found {t.typ}.",
+                    hint=f"At position {t.pos}: {expr}\n" + (" " * t.pos) + "^",
+                )
+            if expected_val is not None and t.val != expected_val:
+                raise WowDataUserError(
+                    "E_DERIVE_PARSE",
+                    f"Expected '{expected_val}' but found '{t.val}'.",
+                    hint=f"At position {t.pos}: {expr}\n" + (" " * t.pos) + "^",
+                )
+            k += 1
+            return t
+
+        # ---------------- Parser (precedence) ----------------
+        # or  -> and ( "or" and )*
+        # and -> cmp ( "and" cmp )*
+        # cmp -> add ( (==|!=|<|<=|>|>=) add )?
+        # add -> mul ( (+|-) mul )*
+        # mul -> unary ( (*|/) unary )*
+        # unary -> ("not" unary) | ("-" unary) | atom
+        # atom -> IDENT | NUM | STR | true/false/null | '(' expr ')'
+
+        def parse_expr():
+            return parse_or()
+
+        def parse_or():
+            node = parse_and()
+            while _peek().typ == "KW" and _peek().val == "or":
+                _eat("KW", "or")
+                rhs = parse_and()
+                node = ("or", node, rhs)
+            return node
+
+        def parse_and():
+            node = parse_cmp()
+            while _peek().typ == "KW" and _peek().val == "and":
+                _eat("KW", "and")
+                rhs = parse_cmp()
+                node = ("and", node, rhs)
+            return node
+
+        def parse_cmp():
+            left = parse_add()
+            if _peek().typ == "OP" and _peek().val in {"==", "!=", ">=", "<=", ">", "<"}:
+                op_tok = _eat("OP")
+                right = parse_add()
+                return ("cmp", op_tok.val, left, right)
+            return left
+
+        def parse_add():
+            node = parse_mul()
+            while _peek().typ == "OP" and _peek().val in {"+", "-"}:
+                op_tok = _eat("OP")
+                rhs = parse_mul()
+                node = ("bin", op_tok.val, node, rhs)
+            return node
+
+        def parse_mul():
+            node = parse_unary()
+            while _peek().typ == "OP" and _peek().val in {"*", "/"}:
+                op_tok = _eat("OP")
+                rhs = parse_unary()
+                node = ("bin", op_tok.val, node, rhs)
+            return node
+
+        def parse_unary():
+            if _peek().typ == "KW" and _peek().val == "not":
+                _eat("KW", "not")
+                inner = parse_unary()
+                return ("not", inner)
+            if _peek().typ == "OP" and _peek().val == "-":
+                _eat("OP", "-")
+                inner = parse_unary()
+                return ("neg", inner)
+            return parse_atom()
+
+        def parse_atom():
+            t = _peek()
+            if t.typ == "OP" and t.val == "(":
+                _eat("OP", "(")
+                node = parse_expr()
+                _eat("OP", ")")
+                return node
+            if t.typ == "IDENT":
+                _eat("IDENT")
+                return ("col", t.val, t.pos)
+            if t.typ == "NUM":
+                _eat("NUM")
+                return ("lit", t.val)
+            if t.typ == "STR":
+                _eat("STR")
+                return ("lit", t.val)
+            if t.typ == "KW" and t.val in {"true", "false", "null"}:
+                _eat("KW")
+                if t.val == "true":
+                    return ("lit", True)
+                if t.val == "false":
+                    return ("lit", False)
+                return ("lit", None)
+            raise WowDataUserError(
+                "E_DERIVE_PARSE",
+                f"Unexpected token '{t.val}' in derive expression.",
+                hint=f"At position {t.pos}: {expr}\n" + (" " * t.pos) + "^",
+            )
+
+        ast = parse_expr()
+        _eat("EOF")
+
+        # ---------------- Eval ----------------
+        def _suggest(col: str) -> str:
+            matches = difflib.get_close_matches(col, columns, n=3, cutoff=0.6)
+            if matches:
+                return f"Did you mean {matches[0]!r}?"
+            return "Available columns: " + ", ".join(columns)
+
+        def _get_col(row: Any, name: str, pos: int) -> Any:
+            if name not in colset:
+                raise WowDataUserError(
+                    "E_DERIVE_UNKNOWN_COL",
+                    f"Unknown column {name!r} in derive expression.",
+                    hint=_suggest(name),
+                )
+            try:
+                return row[name]
+            except Exception:
+                pass
+            if isinstance(row, dict):
+                return row.get(name)
+            try:
+                return row[idx_map[name]]
+            except Exception:
+                return None
+
+        def _looks_number(v: Any) -> bool:
+            if v is None:
+                return False
+            if isinstance(v, (int, float)):
+                return True
+            if isinstance(v, str):
+                s = v.strip()
+                if s == "":
+                    return False
+                try:
+                    float(s)
+                    return True
+                except Exception:
+                    return False
+            return False
+
+        def _to_float(v: Any) -> float:
+            if isinstance(v, (int, float)):
+                return float(v)
+            if isinstance(v, str):
+                return float(v.strip())
+            return float(v)
+
+        def _eval(node, row: Any) -> Any:
+            tag = node[0] if isinstance(node, tuple) else None
+            if tag is None:
+                return node
+
+            if tag == "lit":
+                return node[1]
+            if tag == "col":
+                _, name, pos = node
+                return _get_col(row, name, pos)
+            if tag == "neg":
+                v = _eval(node[1], row)
+                if v is None:
+                    return None
+                if _looks_number(v):
+                    return -_to_float(v)
+                if strict:
+                    raise WowDataUserError(
+                        "E_DERIVE_TYPE",
+                        f"Cannot apply unary '-' to {v!r}.",
+                        hint="Cast the column to a numeric type first.",
+                    )
+                return None
+            if tag == "bin":
+                _, opx, left, right = node
+                a = _eval(left, row)
+                b = _eval(right, row)
+                if a is None or b is None:
+                    return None
+
+                # numeric math
+                if _looks_number(a) and _looks_number(b):
+                    af = _to_float(a)
+                    bf = _to_float(b)
+                    if opx == "+":
+                        return af + bf
+                    if opx == "-":
+                        return af - bf
+                    if opx == "*":
+                        return af * bf
+                    if opx == "/":
+                        return af / bf
+
+                # string concatenation with +
+                if opx == "+" and isinstance(a, str) and isinstance(b, str):
+                    return a + b
+
+                if strict:
+                    raise WowDataUserError(
+                        "E_DERIVE_TYPE",
+                        f"Type mismatch in derive operation: {a!r} {opx} {b!r}.",
+                        hint="Consider applying Transform('cast', ...) earlier in the pipeline.",
+                    )
+                return None
+            if tag == "cmp":
+                _, opx, left, right = node
+                a = _eval(left, row)
+                b = _eval(right, row)
+
+                if opx in {"==", "!="}:
+                    return (a == b) if opx == "==" else (a != b)
+                if a is None or b is None:
+                    return False
+
+                if _looks_number(a) and _looks_number(b):
+                    af = _to_float(a)
+                    bf = _to_float(b)
+                    if opx == ">":
+                        return af > bf
+                    if opx == ">=":
+                        return af >= bf
+                    if opx == "<":
+                        return af < bf
+                    if opx == "<=":
+                        return af <= bf
+
+                if isinstance(a, str) and isinstance(b, str):
+                    if opx == ">":
+                        return a > b
+                    if opx == ">=":
+                        return a >= b
+                    if opx == "<":
+                        return a < b
+                    if opx == "<=":
+                        return a <= b
+
+                if strict:
+                    raise WowDataUserError(
+                        "E_DERIVE_TYPE",
+                        f"Type mismatch in derive comparison: {a!r} {opx} {b!r}.",
+                        hint="Consider applying Transform('cast', ...) earlier in the pipeline.",
+                    )
+                return False
+            if tag == "and":
+                return bool(_eval(node[1], row)) and bool(_eval(node[2], row))
+            if tag == "or":
+                return bool(_eval(node[1], row)) or bool(_eval(node[2], row))
+            if tag == "not":
+                return not bool(_eval(node[1], row))
+
+            raise WowDataUserError(
+                "E_DERIVE_UNSUPPORTED",
+                "Unsupported construct in derive expression.",
+                hint="Use literals, column names, + - * /, comparisons, and/or/not, and parentheses.",
+            )
+
+        # Add or replace column
+        if new in colset:
+            # Recompute the entire row with the new column value replaced.
+            def _row_with_replaced(r: Tuple[Any, ...]):
+                # r is a tuple row (no header)
+                val = _eval(ast, r)
+                i = idx_map[new]
+                rr = list(r)
+                rr[i] = val
+                return tuple(rr)
+
+            data_only = etl.select(table, lambda _r: True)
+            # Build new table by replacing the data rows; header remains the same
+            return etl.stack([etl.header(table)], etl.rowmap(data_only, _row_with_replaced))
+
+        return etl.addfield(table, new, lambda r: _eval(ast, r))
+
+    @classmethod
+    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[FrictionlessSchema]:
+        if not input_schema or not isinstance(input_schema, dict):
+            return input_schema
+        fields = input_schema.get("fields")
+        if not isinstance(fields, list):
+            return input_schema
+
+        new = params.get("new")
+        expr = params.get("expr")
+        overwrite = params.get("overwrite", False)
+
+        # Best-effort type inference from a trivial parse of expr: literals and boolean-ish roots.
+        inferred_type = "any"
+        if isinstance(expr, str) and expr.strip():
+            s = expr.strip()
+            # literal heuristics
+            if (len(s) >= 2) and ((s[0] == s[-1] == "'") or (s[0] == s[-1] == '"')):
+                inferred_type = "string"
+            else:
+                try:
+                    if "." in s:
+                        float(s)
+                        inferred_type = "number"
+                    else:
+                        int(s)
+                        inferred_type = "integer"
+                except Exception:
+                    # boolean-ish operators present
+                    if any(tok in s for tok in ("==", "!=", ">=", "<=", ">", "<", " and ", " or ", "not ")):
+                        inferred_type = "boolean"
+
+        # Build new fields list
+        out_fields: List[Dict[str, Any]] = []
+        replaced = False
+        for f in fields:
+            if isinstance(f, dict) and f.get("name") == new:
+                if overwrite:
+                    nf = dict(f)
+                    nf["type"] = inferred_type
+                    out_fields.append(nf)
+                    replaced = True
+                else:
+                    out_fields.append(f)
+                continue
+            out_fields.append(f)
+
+        if isinstance(new, str) and new.strip() and not replaced:
+            out_fields.append({"name": new, "type": inferred_type})
+
+        return {"fields": out_fields}
