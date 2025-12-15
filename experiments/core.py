@@ -296,6 +296,14 @@ class TransformImpl:
             hint="Implement it as a TransformImpl and register it.",
         )
 
+    @classmethod
+    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[FrictionlessSchema]:
+        """Infer the output schema given an input schema.
+
+        Return None if the schema cannot be determined statically.
+        """
+        return input_schema
+
 
 TRANSFORM_REGISTRY: Dict[str, Type[TransformImpl]] = {}
 
@@ -635,6 +643,11 @@ class FilterTransform(TransformImpl):
 
         return etl.select(table, lambda r: bool(_eval(ast, r)))
 
+    @classmethod
+    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[FrictionlessSchema]:
+        # filtering does not change schema
+        return input_schema
+
 
 @register_transform("select")
 class SelectTransform(TransformImpl):
@@ -653,6 +666,14 @@ class SelectTransform(TransformImpl):
         cols = params.get("columns")
         return etl.cut(table, *cols)
 
+    @classmethod
+    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[FrictionlessSchema]:
+        if not input_schema or "fields" not in input_schema:
+            return input_schema
+        cols = params.get("columns") or []
+        fields = [f for f in input_schema.get("fields", []) if f.get("name") in cols]
+        return {"fields": fields}
+
 
 @register_transform("drop")
 class DropTransform(TransformImpl):
@@ -670,6 +691,14 @@ class DropTransform(TransformImpl):
     def apply(cls, table, *, params: Dict[str, Any], context: "PipelineContext"):
         cols = params.get("columns")
         return etl.cutout(table, *cols)
+
+    @classmethod
+    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[FrictionlessSchema]:
+        if not input_schema or "fields" not in input_schema:
+            return input_schema
+        drop_cols = set(params.get("columns") or [])
+        fields = [f for f in input_schema.get("fields", []) if f.get("name") not in drop_cols]
+        return {"fields": fields}
 
 
 @register_transform("cast")
@@ -824,6 +853,22 @@ class CastTransform(TransformImpl):
 
         return out
 
+    @classmethod
+    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[FrictionlessSchema]:
+        if not input_schema or "fields" not in input_schema:
+            return input_schema
+        types = params.get("types") or {}
+        out_fields = []
+        for f in input_schema.get("fields", []):
+            name = f.get("name")
+            if name in types:
+                nf = dict(f)
+                nf["type"] = types[name]
+                out_fields.append(nf)
+            else:
+                out_fields.append(f)
+        return {"fields": out_fields}
+
 
 @register_transform("validate")
 class ValidateTransform(TransformImpl):
@@ -853,6 +898,12 @@ class Transform:
 
         impl.validate_params(self.params)
         return impl.apply(table, params=self.params, context=context)
+
+    def output_schema(self, input_schema: Optional[FrictionlessSchema]) -> Optional[FrictionlessSchema]:
+        impl = TRANSFORM_REGISTRY.get(self.op)
+        if impl is None:
+            return input_schema
+        return impl.output_schema(input_schema, self.params)
 
     def __str__(self) -> str:
         return f"Transform(op={self.op}, params={self.params})"
