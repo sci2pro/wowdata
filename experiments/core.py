@@ -1,10 +1,7 @@
 from __future__ import annotations
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union, Optional, Type, Callable
-
-
 import petl as etl
 
 try:
@@ -140,6 +137,8 @@ def _transform_to_ir(t: Transform) -> Dict[str, Any]:
     d: Dict[str, Any] = {"op": t.op}
     if t.params:
         d["params"] = dict(t.params)
+    if t.output_schema_override is not None:
+        d["output_schema"] = t.output_schema_override
     return d
 
 
@@ -207,7 +206,186 @@ def _transform_from_ir(d: Dict[str, Any]) -> Transform:
             "IR transform 'params' must be a mapping.",
             hint="Example: params: {where: \"…\"}",
         )
-    return Transform(op, params=dict(params))
+    out_schema = d.get("output_schema")
+    if out_schema is not None and not isinstance(out_schema, dict):
+        raise WowDataUserError(
+            "E_IR_TRANSFORM_SCHEMA",
+            "IR transform 'output_schema' must be a mapping when provided.",
+            hint="Example: output_schema: {fields: [{name: x, type: integer}]}",
+        )
+    return Transform(op, params=dict(params), output_schema_override=out_schema)
+
+
+# --- IR normalization helpers ---
+
+def _is_probably_url(s: str) -> bool:
+    return s.startswith("http://") or s.startswith("https://") or s.startswith("s3://")
+
+
+def _norm_path(p: str, *, base_dir: Optional[Path]) -> str:
+    """Normalize a URI/path relative to a base directory (when provided).
+
+    - Leaves absolute paths and URLs unchanged.
+    - If base_dir is provided and p is relative, returns an absolute resolved path.
+    """
+    if not isinstance(p, str) or not p:
+        return p
+    if _is_probably_url(p):
+        return p
+    try:
+        pp = Path(p)
+    except Exception:
+        return p
+    if pp.is_absolute():
+        return str(pp)
+    if base_dir is None:
+        return p
+    return str((base_dir / pp).resolve())
+
+
+def _normalize_ir(ir: Any, *, base_dir: Optional[Path]) -> Dict[str, Any]:
+    """Normalize IR structure and paths.
+
+    Guarantees:
+      - returns a dict with keys: wowdata, pipeline
+      - pipeline.start.uri is normalized
+      - any sink.uri is normalized
+      - any join params.right (string or descriptor.uri) is normalized
+      - missing/None options become {}
+      - missing transform params become {}
+
+    This does not change semantics; it makes the IR portable and deterministic.
+    """
+    if not isinstance(ir, dict):
+        raise WowDataUserError(
+            "E_IR_ROOT",
+            "IR must be a mapping at the root.",
+            hint="Expected keys: wowdata, pipeline.",
+        )
+
+    ir2: Dict[str, Any] = dict(ir)
+
+    # Default version
+    if ir2.get("wowdata") is None:
+        ir2["wowdata"] = 0
+
+    version = ir2.get("wowdata")
+    if version != 0:
+        raise WowDataUserError(
+            "E_IR_VERSION",
+            f"Unsupported IR version: {version!r}.",
+            hint="Supported: wowdata: 0",
+        )
+
+    pipe = ir2.get("pipeline")
+    if not isinstance(pipe, dict):
+        raise WowDataUserError(
+            "E_IR_PIPELINE",
+            "IR requires a 'pipeline' mapping.",
+            hint="Example: {wowdata: 0, pipeline: {start: {...}, steps: [...]}}",
+        )
+
+    pipe2: Dict[str, Any] = dict(pipe)
+
+    # Normalize start
+    start = pipe2.get("start")
+    if not isinstance(start, dict):
+        raise WowDataUserError(
+            "E_IR_SOURCE",
+            "IR pipeline.start must be a mapping.",
+            hint="Example: start: {uri: people.csv, type: csv}",
+        )
+    start2: Dict[str, Any] = dict(start)
+    u = start2.get("uri")
+    if isinstance(u, str):
+        start2["uri"] = _norm_path(u, base_dir=base_dir)
+    if "options" in start2 and start2["options"] is None:
+        start2["options"] = {}
+    pipe2["start"] = start2
+
+    # Normalize steps
+    steps = pipe2.get("steps")
+    if steps is None:
+        steps = []
+    if not isinstance(steps, list):
+        raise WowDataUserError(
+            "E_IR_STEPS",
+            "IR pipeline.steps must be a list.",
+            hint="Example: steps: [{transform: {...}}, {sink: {...}}]",
+        )
+
+    norm_steps: List[Dict[str, Any]] = []
+    for i, item in enumerate(steps):
+        if not isinstance(item, dict) or len(item) != 1:
+            raise WowDataUserError(
+                "E_IR_STEP",
+                f"IR step #{i} must be a mapping with exactly one key: 'transform' or 'sink'.",
+                hint=str(item),
+            )
+
+        if "sink" in item:
+            s = item["sink"]
+            if not isinstance(s, dict):
+                raise WowDataUserError(
+                    "E_IR_SINK",
+                    "IR sink must be a mapping.",
+                    hint="Example: - sink: {uri: out.csv}",
+                )
+            s2: Dict[str, Any] = dict(s)
+            su = s2.get("uri")
+            if isinstance(su, str):
+                s2["uri"] = _norm_path(su, base_dir=base_dir)
+            if "options" in s2 and s2["options"] is None:
+                s2["options"] = {}
+            norm_steps.append({"sink": s2})
+            continue
+
+        if "transform" in item:
+            t = item["transform"]
+            if not isinstance(t, dict):
+                raise WowDataUserError(
+                    "E_IR_TRANSFORM",
+                    "IR transform must be a mapping.",
+                    hint="Example: - transform: {op: select, params: {...}}",
+                )
+            t2: Dict[str, Any] = dict(t)
+            params = t2.get("params")
+            if params is None:
+                params = {}
+                t2["params"] = params
+            if not isinstance(params, dict):
+                raise WowDataUserError(
+                    "E_IR_TRANSFORM",
+                    "IR transform 'params' must be a mapping.",
+                    hint="Example: params: {where: \"age >= 30\"}",
+                )
+
+            # Join: normalize params.right if present
+            if t2.get("op") == "join" and "right" in params:
+                r = params.get("right")
+                if isinstance(r, str):
+                    params["right"] = _norm_path(r, base_dir=base_dir)
+                elif isinstance(r, dict):
+                    r2: Dict[str, Any] = dict(r)
+                    ru = r2.get("uri")
+                    if isinstance(ru, str):
+                        r2["uri"] = _norm_path(ru, base_dir=base_dir)
+                    if "options" in r2 and r2["options"] is None:
+                        r2["options"] = {}
+                    params["right"] = r2
+
+            norm_steps.append({"transform": t2})
+            continue
+
+        raise WowDataUserError(
+            "E_IR_STEP",
+            f"IR step #{i} must be 'transform' or 'sink'.",
+            hint="Example: {transform: {op: select, params: {...}}}",
+        )
+
+    pipe2["steps"] = norm_steps
+
+    return {"wowdata": 0, "pipeline": pipe2}
 
 
 @dataclass(frozen=True)
@@ -1058,6 +1236,7 @@ class ValidateTransform(TransformImpl):
 class Transform:
     op: str
     params: Dict[str, Any] = field(default_factory=dict)
+    output_schema_override: Optional[FrictionlessSchema] = None
 
     def apply(self, table, *, context: "PipelineContext"):
         """
@@ -1076,6 +1255,8 @@ class Transform:
         return impl.apply(table, params=self.params, context=context)
 
     def output_schema(self, input_schema: Optional[FrictionlessSchema]) -> Optional[FrictionlessSchema]:
+        if self.output_schema_override is not None:
+            return self.output_schema_override
         impl = TRANSFORM_REGISTRY.get(self.op)
         if impl is None:
             return input_schema
@@ -1218,28 +1399,10 @@ class Pipeline:
         }
 
     @classmethod
-    def from_ir(cls, ir: Dict[str, Any]) -> "Pipeline":
+    def from_ir(cls, ir: Dict[str, Any], *, base_dir: Optional[Path] = None) -> "Pipeline":
         """Deserialize a pipeline from IR (dict)."""
-        if not isinstance(ir, dict):
-            raise WowDataUserError(
-                "E_IR_ROOT",
-                "IR must be a mapping at the root.",
-                hint="Expected keys: wowdata, pipeline.",
-            )
-        version = ir.get("wowdata")
-        if version != 0:
-            raise WowDataUserError(
-                "E_IR_VERSION",
-                f"Unsupported IR version: {version!r}.",
-                hint="Supported: wowdata: 0",
-            )
-        pipe = ir.get("pipeline")
-        if not isinstance(pipe, dict):
-            raise WowDataUserError(
-                "E_IR_PIPELINE",
-                "IR requires a 'pipeline' mapping.",
-                hint="Example: {wowdata: 0, pipeline: {start: {...}, steps: [...]}}",
-            )
+        ir = _normalize_ir(ir, base_dir=base_dir)
+        pipe = ir["pipeline"]
 
         start = _source_from_ir(pipe.get("start") or {})
         steps = pipe.get("steps") or []
@@ -1271,7 +1434,7 @@ class Pipeline:
 
         return out
 
-    def to_yaml(self) -> str:
+    def to_yaml(self, *, lock_schema: bool = False, sample_rows: int = 200, force: bool = False) -> str:
         """Dump IR to YAML string."""
         if yaml is None:
             raise WowDataUserError(
@@ -1279,10 +1442,11 @@ class Pipeline:
                 "PyYAML is not available; cannot serialize to YAML.",
                 hint="Install dependency: pip install pyyaml",
             )
-        return yaml.safe_dump(self.to_ir(), sort_keys=False)
+        pipe = self.lock_schema(sample_rows=sample_rows, force=force) if lock_schema else self
+        return yaml.safe_dump(pipe.to_ir(), sort_keys=False)
 
     @classmethod
-    def from_yaml(cls, text: str) -> "Pipeline":
+    def from_yaml(cls, text: str, *, base_dir: Optional[Path] = None) -> "Pipeline":
         """Load pipeline from YAML string."""
         if yaml is None:
             raise WowDataUserError(
@@ -1298,18 +1462,32 @@ class Pipeline:
                 f"Failed to parse YAML: {e}",
                 hint="Check indentation and quoting.",
             )
-        return cls.from_ir(ir)
+        return cls.from_ir(ir, base_dir=base_dir)
 
-    def save_yaml(self, path: Union[str, Path]) -> None:
+    def save_yaml(self, path: Union[str, Path], *, lock_schema: bool = False, sample_rows: int = 200, force: bool = False) -> None:
         """Write YAML IR to a file."""
         p = Path(path)
-        p.write_text(self.to_yaml(), encoding="utf-8")
+        p.write_text(self.to_yaml(lock_schema=lock_schema, sample_rows=sample_rows, force=force), encoding="utf-8")
 
     @classmethod
     def load_yaml(cls, path: Union[str, Path]) -> "Pipeline":
         """Load YAML IR from a file."""
         p = Path(path)
-        return cls.from_yaml(p.read_text(encoding="utf-8"))
+        return cls.from_yaml(p.read_text(encoding="utf-8"), base_dir=p.parent)
+
+    def lock_schema(self, sample_rows: int = 200, force: bool = False) -> "Pipeline":
+        sch = self.start.peek_schema(sample_rows=sample_rows, force=force)
+        locked_steps = []
+        for step in self.steps:
+            if isinstance(step, Transform):
+                sch = step.output_schema(sch)
+                locked_steps.append(
+                    Transform(step.op, params=dict(step.params), output_schema_override=sch)
+                )
+            else:
+                locked_steps.append(step)
+        return Pipeline(self.start, locked_steps)
+
 
 @register_transform("derive")
 class DeriveTransform(TransformImpl):
