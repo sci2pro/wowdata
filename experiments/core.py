@@ -1278,8 +1278,244 @@ class CastTransform(TransformImpl):
 @register_transform("validate")
 class ValidateTransform(TransformImpl):
     @classmethod
+    def validate_params(cls, params: Dict[str, Any], input_schema: Optional[FrictionlessSchema] = None) -> None:
+        sample_rows = params.get("sample_rows", 5000)
+        if not isinstance(sample_rows, int) or sample_rows <= 0:
+            raise WowDataUserError(
+                "E_VALIDATE_PARAMS",
+                "validate params.sample_rows must be a positive integer.",
+                hint="Example: Transform('validate', params={'sample_rows': 1000})",
+            )
+
+        fail = params.get("fail", True)
+        if not isinstance(fail, bool):
+            raise WowDataUserError(
+                "E_VALIDATE_PARAMS",
+                "validate params.fail must be a boolean.",
+                hint="Example: Transform('validate', params={'fail': false})",
+            )
+
+        strict_schema = params.get("strict_schema", True)
+        if not isinstance(strict_schema, bool):
+            raise WowDataUserError(
+                "E_VALIDATE_PARAMS",
+                "validate params.strict_schema must be a boolean.",
+                hint="Example: Transform('validate', params={'strict_schema': false})",
+            )
+
+    @classmethod
     def apply(cls, table, *, params: Dict[str, Any], context: "PipelineContext"):
-        context.checkpoints.append(("validate", params))
+        sample_rows = params.get("sample_rows", 5000)
+        fail = params.get("fail", True)
+        strict_schema = params.get("strict_schema", True)
+
+        # Require Frictionless for validation.
+        if Resource is None:
+            raise WowDataUserError(
+                "E_VALIDATE_IMPORT",
+                "Validation requires the 'frictionless' dependency, but it is not available.",
+                hint="Install it with: pip install frictionless",
+            )
+
+        # Best-available schema (carried through the pipeline).
+        sch: Dict[str, Any] = {}
+        if isinstance(getattr(context, "schema", None), dict):
+            sch = dict(context.schema)  # shallow copy
+
+        # Bounded sample (header + N rows).
+        try:
+            sample_tbl = etl.head(table, sample_rows + 1)
+            header = list(etl.header(sample_tbl))
+            data_rows = list(etl.data(sample_tbl))  # data only (no header)
+        except Exception as e:
+            raise WowDataUserError(
+                "E_VALIDATE_READ",
+                f"validate could not read a sample of rows for validation: {e}",
+                hint="Check that your Source options (delimiter/encoding) are correct.",
+            ) from e
+
+        if not data_rows:
+            result = {
+                "valid": True,
+                "rows_checked": 0,
+                "errors": 0,
+                "warnings": 0,
+                "notes": ["No rows to validate (empty table)."],
+            }
+            context.checkpoints.append(("validate", {"params": dict(params), "result": result}))
+            context.validations.append(result)
+            return table
+
+        # Frictionless validates best when given records (dicts) keyed by header.
+        # Pad/truncate rows to header length for deterministic column alignment.
+        def _row_to_record(r):
+            rr = list(r)
+            if len(rr) < len(header):
+                rr = rr + [None] * (len(header) - len(rr))
+            if len(rr) > len(header):
+                rr = rr[: len(header)]
+            return dict(zip(header, rr))
+
+        records = [_row_to_record(r) for r in data_rows]
+
+        # Teach explicitness: if strict_schema and no schema fields, fail loudly.
+        fields = sch.get("fields") if isinstance(sch, dict) else None
+        expected_types = {}
+        if isinstance(fields, list):
+            for f in fields:
+                if isinstance(f, dict) and isinstance(f.get("name"), str):
+                    expected_types[f["name"]] = f.get("type", "any")
+        if strict_schema and (not isinstance(fields, list) or not fields):
+            raise WowDataUserError(
+                "E_VALIDATE_NO_SCHEMA",
+                "validate requires a known schema, but none is available.",
+                hint=(
+                    "Provide an inline schema on Source(..., schema={...}), "
+                    "or enable Frictionless inference, or set params.strict_schema=false."
+                ),
+            )
+
+        # Validate via Frictionless (in-memory).
+        try:
+            schema_obj = None
+            if sch:
+                try:
+                    # Frictionless expects Schema-like objects; passing a raw dict can crash on some versions.
+                    from frictionless import Schema as _FrSchema  # type: ignore
+                    schema_obj = _FrSchema.from_descriptor(sch) if hasattr(_FrSchema, "from_descriptor") else _FrSchema(sch)
+                except Exception:
+                    # Fall back to passing no schema if conversion fails; strict_schema above should catch missing schema.
+                    schema_obj = None
+
+            resource = Resource(data=records, schema=schema_obj)
+            # Prefer cast-aware validation when supported, so "12" can satisfy integer, etc.
+            try:
+                report = resource.validate(cast=True)
+            except TypeError:
+                report = resource.validate()
+        except Exception as e:
+            raise WowDataUserError(
+                "E_VALIDATE_FAILED_TO_RUN",
+                f"validate could not run validation: {e}",
+                hint="Check that your schema is well-formed and matches the data.",
+            ) from e
+
+        # Summarize report into a human-scale artifact.
+        try:
+            report_desc = report.to_descriptor() if hasattr(report, "to_descriptor") else {}
+        except Exception:
+            report_desc = {}
+
+        valid = bool(getattr(report, "valid", False))
+        tasks = report_desc.get("tasks") or []
+
+        err_list: List[Dict[str, Any]] = []
+        warn_list: List[Dict[str, Any]] = []
+        for t in tasks:
+            if isinstance(t, dict):
+                errs = t.get("errors") or []
+                if isinstance(errs, list):
+                    for er in errs:
+                        if isinstance(er, dict):
+                            err_list.append(er)
+                warns = t.get("warnings") or []
+                if isinstance(warns, list):
+                    for wr in warns:
+                        if isinstance(wr, dict):
+                            warn_list.append(wr)
+
+        preview_errors: List[str] = []
+        for er in err_list[:5]:
+            rown = er.get("rowNumber")
+            fieldn = er.get("fieldName")
+
+            # Try to show the actual offending value (from the sampled records).
+            chosen_val = None
+            if isinstance(rown, int) and rown >= 1 and isinstance(fieldn, str):
+                # Frictionless rowNumber is often 1-based and may include the header row (so first data row is rowNumber=2).
+                candidate_idxs = [rown - 2, rown - 1]  # header-inclusive first, then data-only fallback
+
+                for idx in candidate_idxs:
+                    if 0 <= idx < len(records):
+                        rec = records[idx]
+                        if isinstance(rec, dict) and fieldn in rec:
+                            chosen_val = rec.get(fieldn)
+                            break
+
+            # Determine an "actual" type label for teaching-oriented errors.
+            def _wow_type(v: Any) -> str:
+                if v is None:
+                    return "null"
+                if isinstance(v, bool):
+                    return "boolean"
+                if isinstance(v, int) and not isinstance(v, bool):
+                    return "integer"
+                if isinstance(v, float):
+                    return "number"
+                try:
+                    from datetime import date, datetime
+                    if isinstance(v, datetime):
+                        return "datetime"
+                    if isinstance(v, date):
+                        return "date"
+                except Exception:
+                    pass
+                # CSV and most PETL sources yield strings
+                return "string"
+
+            expected = expected_types.get(fieldn) if isinstance(fieldn, str) else None
+            if expected is not None and isinstance(rown, int) and isinstance(fieldn, str):
+                actual = _wow_type(chosen_val)
+                preview_errors.append(
+                    f'value type is "{actual}" (expected {expected!r}), row {rown}, field {fieldn!r}, value={chosen_val!r}'
+                )
+                continue
+
+            # Fallback: keep Frictionless note/message if we can't build a precise cell-level message.
+            note = er.get("note") or er.get("message") or "Validation error"
+            if isinstance(note, str):
+                import re
+                note = re.sub(r'type is "([A-Za-z0-9_]+)/default"', r'type is "\1"', note)
+            loc = []
+            if rown is not None:
+                loc.append(f"row {rown}")
+            if fieldn:
+                loc.append(f"field {fieldn!r}")
+            where = (", " + ", ".join(loc)) if loc else ""
+            preview_errors.append(f"{note}{where}")
+
+        # Remove any stray  artifacts from the result dict
+        def _clean_result(d):
+            if isinstance(d, dict):
+                return {k: _clean_result(v) for k, v in d.items() if k != ""}
+            elif isinstance(d, list):
+                return [_clean_result(v) for v in d]
+            return d
+
+        result = {
+            "valid": valid,
+            "rows_checked": len(data_rows),
+            "errors": len(err_list),
+            "warnings": len(warn_list),
+            "error_preview": preview_errors,
+        }
+        result = _clean_result(result)
+
+        context.checkpoints.append(("validate", {"params": dict(params), "result": result}))
+        context.validations.append(result)
+
+        if (not valid) and fail:
+            hint = (
+                "Fix the data or adjust the schema. First issues:\n- " + "\n- ".join(preview_errors)
+                if preview_errors
+                else "Fix the data or adjust the schema. Inspect context.validations for details."
+            )
+            raise WowDataUserError(
+                "E_VALIDATE_INVALID",
+                "Validation failed: the data does not match the expected schema.",
+                hint=hint,
+            )
+
         return table
 
 
@@ -1359,6 +1595,7 @@ class Sink:
 class PipelineContext:
     checkpoints: List[Tuple[str, Dict[str, Any]]] = field(default_factory=list)
     schema: Optional[FrictionlessSchema] = None
+    validations: List[Dict[str, Any]] = field(default_factory=list)
     # later: frictionless reports, timing, rowcounts, etc.
 
 
