@@ -1,4 +1,6 @@
-from core import Source, Transform, Sink
+from core import Transform
+from wowdata.models.sinks import Sink
+from wowdata.models.sources import Source
 
 s = Source("people.csv")
 print(s)  # bounded preview

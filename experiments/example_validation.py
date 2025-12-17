@@ -1,4 +1,6 @@
-from core import Source, Transform, Pipeline
+from core import Transform
+from wowdata.models.pipeline import Pipeline
+from wowdata.models.sources import Source
 
 # Inline schema so validate has something authoritative to check
 schema = {

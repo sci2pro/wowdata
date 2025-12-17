@@ -1,4 +1,7 @@
-from core import Source, Transform, Sink, Pipeline
+from core import Transform
+from wowdata.models.pipeline import Pipeline
+from wowdata.models.sinks import Sink
+from wowdata.models.sources import Source
 from wowdata.errors import WowDataUserError
 
 s = Source("people.csv")
