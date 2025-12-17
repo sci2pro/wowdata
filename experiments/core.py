@@ -1097,24 +1097,38 @@ class CastTransform(TransformImpl):
                 return v
             if isinstance(v, float) and v.is_integer():
                 return int(v)
-            if isinstance(v, str):
-                s = v.strip()
-                if s == "":
-                    return None
-                return int(float(s))
-            return int(v)
+            try:
+                if isinstance(v, str):
+                    s = v.strip()
+                    if s == "":
+                        return None
+                    return int(float(s))
+                return int(v)
+            except Exception as e:
+                raise WowDataUserError(
+                    "E_CAST_COERCE",
+                    f"Cannot coerce value {v!r} to integer.",
+                    hint="Ensure the column contains numeric values (e.g. 12, 12.0). Use on_error='null' or on_error='keep' to handle messy rows."
+                ) from e
 
         def _to_number(v: Any) -> Any:
             if v is None:
                 return None
             if isinstance(v, (int, float)):
                 return float(v)
-            if isinstance(v, str):
-                s = v.strip()
-                if s == "":
-                    return None
-                return float(s)
-            return float(v)
+            try:
+                if isinstance(v, str):
+                    s = v.strip()
+                    if s == "":
+                        return None
+                    return float(s)
+                return float(v)
+            except Exception as e:
+                raise WowDataUserError(
+                    "E_CAST_COERCE",
+                    f"Cannot coerce value {v!r} to number.",
+                    hint="Ensure the column contains numeric values (e.g. 12, 12.5). Use on_error='null' or on_error='keep' to handle messy rows."
+                ) from e
 
         def _to_bool(v: Any) -> Any:
             if v is None:
@@ -1132,7 +1146,7 @@ class CastTransform(TransformImpl):
                 if s in {"false", "f", "no", "n", "0"}:
                     return False
             raise WowDataUserError(
-                "E_CAST_TYPE",
+                "E_CAST_COERCE",
                 f"Cannot coerce value {v!r} to boolean.",
                 hint="Ensure the column contains values like true/false, yes/no, 1/0, or cast it to string first."
             )
@@ -1155,11 +1169,18 @@ class CastTransform(TransformImpl):
                 s = v.strip()
                 if s == "":
                     return None
-                return date.fromisoformat(s)
+                try:
+                    return date.fromisoformat(s)
+                except Exception as e:
+                    raise WowDataUserError(
+                        "E_CAST_COERCE",
+                        f"Cannot coerce value {v!r} to date.",
+                        hint="Ensure the value is an ISO date string (YYYY-MM-DD). Use on_error='null' or on_error='keep' to handle messy rows."
+                    ) from e
             raise WowDataUserError(
-                "E_CAST_TYPE",
+                "E_CAST_COERCE",
                 f"Cannot coerce value {v!r} to date.",
-                hint="Ensure the value is an ISO date string (YYYY-MM-DD) or cast it to string first."
+                hint="Ensure the value is an ISO date string (YYYY-MM-DD). Use on_error='null' or on_error='keep' to handle messy rows."
             )
 
         def _to_datetime(v: Any) -> Any:
@@ -1171,11 +1192,18 @@ class CastTransform(TransformImpl):
                 s = v.strip()
                 if s == "":
                     return None
-                return datetime.fromisoformat(s)
+                try:
+                    return datetime.fromisoformat(s)
+                except Exception as e:
+                    raise WowDataUserError(
+                        "E_CAST_COERCE",
+                        f"Cannot coerce value {v!r} to datetime.",
+                        hint="Ensure the value is an ISO datetime string (e.g. YYYY-MM-DDTHH:MM:SS). Use on_error='null' or on_error='keep' to handle messy rows."
+                    ) from e
             raise WowDataUserError(
-                "E_CAST_TYPE",
+                "E_CAST_COERCE",
                 f"Cannot coerce value {v!r} to datetime.",
-                hint="Ensure the value is an ISO datetime string (YYYY-MM-DDTHH:MM:SS) or cast it to string first."
+                hint="Ensure the value is an ISO datetime string (e.g. YYYY-MM-DDTHH:MM:SS). Use on_error='null' or on_error='keep' to handle messy rows."
             )
 
         converters = {
@@ -1191,12 +1219,24 @@ class CastTransform(TransformImpl):
             def f(v: Any) -> Any:
                 try:
                     return conv(v)
-                except Exception as e:
+                except WowDataUserError as e:
+                    code = getattr(e, "code", None)
+                    if code != "E_CAST_COERCE":
+                        # Semantic/config violations must always surface.
+                        raise
+                    # Value-level coercion failure: apply policy.
                     if on_error == "fail":
-                        raise e
+                        raise
                     if on_error == "null":
                         return None
                     return v
+                except Exception as e:
+                    # Unexpected exception: treat as internal bug, never suppress via on_error.
+                    raise WowDataUserError(
+                        "E_CAST_INTERNAL",
+                        f"Internal error while casting value {v!r}: {type(e).__name__}: {e}",
+                        hint="This should not happen. Please report a bug with a minimal reproducible example."
+                    ) from e
             return f
 
         out = table
@@ -1209,7 +1249,7 @@ class CastTransform(TransformImpl):
                 )
             if not isinstance(typ, str) or typ not in converters:
                 raise WowDataUserError(
-                    "E_CAST_TYPE",
+                    "E_CAST_TYPE_UNSUPPORTED",
                     f"Unsupported cast type for '{col}': {typ!r}.",
                     hint="Supported types: integer, number, boolean, string, date, datetime.",
                 )
