@@ -23,13 +23,13 @@ def run(path, fail=True, strict_schema=True):
 
 
 print("=== OK ===")
-run("people_ok.csv")
+run("../wowdata/tests/data/people_ok.csv")
 
 print("\n=== BAD (fail=True) ===")
 try:
-    run("people_bad.csv", fail=True)
+    run("../wowdata/tests/data/people_bad.csv", fail=True)
 except Exception as e:
     print("Raised:", type(e).__name__, e)
 
 print("\n=== BAD (fail=False) ===")
-run("people_bad.csv", fail=False)
+run("../wowdata/tests/data/people_bad.csv", fail=False)
