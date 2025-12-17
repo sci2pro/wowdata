@@ -1,4 +1,5 @@
-from core import Source, Transform, Sink, Pipeline, WowDataUserError
+from core import Source, Transform, Sink, Pipeline
+from wowdata.errors import WowDataUserError
 
 s = Source("people.csv")
 
