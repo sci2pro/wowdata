@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union, Optional, Type, Callable
+
 import petl as etl
 
 try:
@@ -645,6 +647,219 @@ def register_transform(op: str) -> Callable[[Type[TransformImpl]], Type[Transfor
     return deco
 
 
+# =========================
+# Shared expression language (tokenizer + parser)
+# Used by filter and derive to keep the DSL consistent.
+# =========================
+
+class _ExprTok:
+    __slots__ = ("typ", "val", "pos")
+
+    def __init__(self, typ: str, val: Any, pos: int):
+        self.typ = typ
+        self.val = val
+        self.pos = pos
+
+
+def _expr_tokenize(src: str, *, allow_arith: bool) -> List["_ExprTok"]:
+    import re
+
+    _re_ws = re.compile(r"\s+")
+    _re_ident = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+    _re_number = re.compile(r"(?:\d+\.\d*|\d*\.\d+|\d+)")
+    KEYWORDS = {"and", "or", "not", "true", "false", "null"}
+
+    OPS_2 = {"==", "!=", ">=", "<="}
+    OPS_1 = {">", "<", "(", ")"}
+    if allow_arith:
+        OPS_1 |= {"+", "-", "*", "/"}
+
+    out: List[_ExprTok] = []
+    i = 0
+    n = len(src)
+
+    while i < n:
+        m = _re_ws.match(src, i)
+        if m:
+            i = m.end()
+            continue
+
+        if src[i] in ("'", '"'):
+            q = src[i]
+            j = i + 1
+            buf = []
+            while j < n:
+                ch = src[j]
+                if ch == "\\" and j + 1 < n:
+                    buf.append(src[j + 1])
+                    j += 2
+                    continue
+                if ch == q:
+                    out.append(_ExprTok("STR", "".join(buf), i))
+                    i = j + 1
+                    break
+                buf.append(ch)
+                j += 1
+            else:
+                raise WowDataUserError(
+                    "E_EXPR_PARSE",
+                    "Unterminated string literal in expression.",
+                    hint=src,
+                )
+            continue
+
+        two = src[i: i + 2]
+        if two in OPS_2:
+            out.append(_ExprTok("OP", two, i))
+            i += 2
+            continue
+
+        if src[i] in OPS_1:
+            out.append(_ExprTok("OP", src[i], i))
+            i += 1
+            continue
+
+        m = _re_number.match(src, i)
+        if m:
+            s = m.group(0)
+            out.append(_ExprTok("NUM", float(s) if ("." in s) else int(s), i))
+            i = m.end()
+            continue
+
+        m = _re_ident.match(src, i)
+        if m:
+            s = m.group(0)
+            low = s.lower()
+            if low in KEYWORDS:
+                out.append(_ExprTok("KW", low, i))
+            else:
+                out.append(_ExprTok("IDENT", s, i))
+            i = m.end()
+            continue
+
+        raise WowDataUserError(
+            "E_EXPR_PARSE",
+            f"Unexpected character {src[i]!r} in expression.",
+            hint=f"At position {i}: {src}\n" + (" " * i) + "^",
+        )
+
+    out.append(_ExprTok("EOF", None, n))
+    return out
+
+
+def _expr_parse(src: str, *, allow_arith: bool) -> Any:
+    toks = _expr_tokenize(src, allow_arith=allow_arith)
+    k = 0
+
+    def _peek() -> _ExprTok:
+        return toks[k]
+
+    def _eat(expected_typ: str, expected_val: Optional[str] = None) -> _ExprTok:
+        nonlocal k
+        t = toks[k]
+        if t.typ != expected_typ:
+            raise WowDataUserError(
+                "E_EXPR_PARSE",
+                f"Expected {expected_typ} but found {t.typ}.",
+                hint=f"At position {t.pos}: {src}\n" + (" " * t.pos) + "^",
+            )
+        if expected_val is not None and t.val != expected_val:
+            raise WowDataUserError(
+                "E_EXPR_PARSE",
+                f"Expected '{expected_val}' but found '{t.val}'.",
+                hint=f"At position {t.pos}: {src}\n" + (" " * t.pos) + "^",
+            )
+        k += 1
+        return t
+
+    def parse_expr():
+        return parse_or()
+
+    def parse_or():
+        node = parse_and()
+        while _peek().typ == "KW" and _peek().val == "or":
+            _eat("KW", "or")
+            rhs = parse_and()
+            node = ("or", node, rhs)
+        return node
+
+    def parse_and():
+        node = parse_cmp()
+        while _peek().typ == "KW" and _peek().val == "and":
+            _eat("KW", "and")
+            rhs = parse_cmp()
+            node = ("and", node, rhs)
+        return node
+
+    def parse_cmp():
+        left = parse_add() if allow_arith else parse_unary()
+        if _peek().typ == "OP" and _peek().val in {"==", "!=", ">=", "<=", ">", "<"}:
+            op_tok = _eat("OP")
+            right = parse_add() if allow_arith else parse_unary()
+            return ("cmp", op_tok.val, left, right)
+        return left
+
+    def parse_add():
+        node = parse_mul()
+        while _peek().typ == "OP" and _peek().val in {"+", "-"}:
+            op_tok = _eat("OP")
+            rhs = parse_mul()
+            node = ("bin", op_tok.val, node, rhs)
+        return node
+
+    def parse_mul():
+        node = parse_unary()
+        while _peek().typ == "OP" and _peek().val in {"*", "/"}:
+            op_tok = _eat("OP")
+            rhs = parse_unary()
+            node = ("bin", op_tok.val, node, rhs)
+        return node
+
+    def parse_unary():
+        if _peek().typ == "KW" and _peek().val == "not":
+            _eat("KW", "not")
+            inner = parse_unary()
+            return ("not", inner)
+        if allow_arith and _peek().typ == "OP" and _peek().val == "-":
+            _eat("OP", "-")
+            inner = parse_unary()
+            return ("neg", inner)
+        return parse_atom()
+
+    def parse_atom():
+        t = _peek()
+        if t.typ == "OP" and t.val == "(":
+            _eat("OP", "(")
+            node = parse_expr()
+            _eat("OP", ")")
+            return node
+        if t.typ == "IDENT":
+            _eat("IDENT")
+            return ("col", t.val, t.pos)
+        if t.typ == "NUM":
+            _eat("NUM")
+            return ("lit", t.val)
+        if t.typ == "STR":
+            _eat("STR")
+            return ("lit", t.val)
+        if t.typ == "KW" and t.val in {"true", "false", "null"}:
+            _eat("KW")
+            if t.val == "true":
+                return ("lit", True)
+            if t.val == "false":
+                return ("lit", False)
+            return ("lit", None)
+        raise WowDataUserError(
+            "E_EXPR_PARSE",
+            f"Unexpected token '{t.val}' in expression.",
+            hint=f"At position {t.pos}: {src}\n" + (" " * t.pos) + "^",
+        )
+
+    ast = parse_expr()
+    _eat("EOF")
+    return ast
+
+
 @register_transform("filter")
 class FilterTransform(TransformImpl):
     @classmethod
@@ -672,189 +887,18 @@ class FilterTransform(TransformImpl):
         columns = list(etl.header(table))
         colset = set(columns)
 
-        import re
         import difflib
 
-        # ---------------- Tokenizer ----------------
-        _re_ws = re.compile(r"\s+")
-        _re_ident = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-        _re_number = re.compile(r"(?:\d+\.\d*|\d*\.\d+|\d+)")
-
-        KEYWORDS = {"and", "or", "not", "true", "false", "null"}
-
-        class _Tok:
-            __slots__ = ("typ", "val", "pos")
-
-            def __init__(self, typ: str, val: Any, pos: int):
-                self.typ = typ
-                self.val = val
-                self.pos = pos
-
-        def _tokenize(src: str) -> List[_Tok]:
-            out: List[_Tok] = []
-            i = 0
-            n = len(src)
-            while i < n:
-                m = _re_ws.match(src, i)
-                if m:
-                    i = m.end()
-                    continue
-
-                # strings: single or double quoted, with basic escapes
-                if src[i] in ("'", '"'):
-                    q = src[i]
-                    j = i + 1
-                    buf = []
-                    while j < n:
-                        ch = src[j]
-                        if ch == "\\" and j + 1 < n:
-                            buf.append(src[j + 1])
-                            j += 2
-                            continue
-                        if ch == q:
-                            out.append(_Tok("STR", "".join(buf), i))
-                            i = j + 1
-                            break
-                        buf.append(ch)
-                        j += 1
-                    else:
-                        raise WowDataUserError(
-                            "E_FILTER_PARSE",
-                            "Unterminated string literal in filter expression.",
-                            hint=src,
-                        )
-                    continue
-
-                # operators
-                two = src[i: i + 2]
-                if two in {"==", "!=", ">=", "<="}:
-                    out.append(_Tok("OP", two, i))
-                    i += 2
-                    continue
-                if src[i] in {">", "<", "(", ")"}:
-                    out.append(_Tok("OP", src[i], i))
-                    i += 1
-                    continue
-
-                # number
-                m = _re_number.match(src, i)
-                if m:
-                    s = m.group(0)
-                    out.append(_Tok("NUM", float(s) if ("." in s) else int(s), i))
-                    i = m.end()
-                    continue
-
-                # identifier/keyword
-                m = _re_ident.match(src, i)
-                if m:
-                    s = m.group(0)
-                    low = s.lower()
-                    if low in KEYWORDS:
-                        out.append(_Tok("KW", low, i))
-                    else:
-                        out.append(_Tok("IDENT", s, i))
-                    i = m.end()
-                    continue
-
+        try:
+            ast = _expr_parse(where, allow_arith=False)
+        except WowDataUserError as e:
+            if getattr(e, "code", None) == "E_EXPR_PARSE":
                 raise WowDataUserError(
                     "E_FILTER_PARSE",
-                    f"Unexpected character {src[i]!r} in filter expression.",
-                    hint=f"At position {i}: {src}\n" + (" " * i) + "^",
-                )
-
-            out.append(_Tok("EOF", None, n))
-            return out
-
-        toks = _tokenize(where)
-        k = 0
-
-        def _peek() -> _Tok:
-            return toks[k]
-
-        def _eat(expected_typ: str, expected_val: Optional[str] = None) -> _Tok:
-            nonlocal k
-            t = toks[k]
-            if t.typ != expected_typ:
-                raise WowDataUserError(
-                    "E_FILTER_PARSE",
-                    f"Expected {expected_typ} but found {t.typ}.",
-                    hint=f"At position {t.pos}: {where}\n" + (" " * t.pos) + "^",
-                )
-            if expected_val is not None and t.val != expected_val:
-                raise WowDataUserError(
-                    "E_FILTER_PARSE",
-                    f"Expected '{expected_val}' but found '{t.val}'.",
-                    hint=f"At position {t.pos}: {where}\n" + (" " * t.pos) + "^",
-                )
-            k += 1
-            return t
-
-        # ---------------- Parser (precedence: not > cmp > and > or) ----------------
-        def parse_expr():
-            return parse_or()
-
-        def parse_or():
-            node = parse_and()
-            while _peek().typ == "KW" and _peek().val == "or":
-                _eat("KW", "or")
-                rhs = parse_and()
-                node = ("or", node, rhs)
-            return node
-
-        def parse_and():
-            node = parse_not()
-            while _peek().typ == "KW" and _peek().val == "and":
-                _eat("KW", "and")
-                rhs = parse_not()
-                node = ("and", node, rhs)
-            return node
-
-        def parse_not():
-            if _peek().typ == "KW" and _peek().val == "not":
-                _eat("KW", "not")
-                inner = parse_not()
-                return ("not", inner)
-            return parse_cmp()
-
-        def parse_cmp():
-            left = parse_atom()
-            if _peek().typ == "OP" and _peek().val in {"==", "!=", ">=", "<=", ">", "<"}:
-                op_tok = _eat("OP")
-                right = parse_atom()
-                return ("cmp", op_tok.val, left, right)
-            return left
-
-        def parse_atom():
-            t = _peek()
-            if t.typ == "OP" and t.val == "(":
-                _eat("OP", "(")
-                node = parse_expr()
-                _eat("OP", ")")
-                return node
-            if t.typ == "IDENT":
-                _eat("IDENT")
-                return ("col", t.val, t.pos)
-            if t.typ == "NUM":
-                _eat("NUM")
-                return ("lit", t.val)
-            if t.typ == "STR":
-                _eat("STR")
-                return ("lit", t.val)
-            if t.typ == "KW" and t.val in {"true", "false", "null"}:
-                _eat("KW")
-                if t.val == "true":
-                    return ("lit", True)
-                if t.val == "false":
-                    return ("lit", False)
-                return ("lit", None)
-            raise WowDataUserError(
-                "E_FILTER_PARSE",
-                f"Unexpected token '{t.val}' in filter expression.",
-                hint=f"At position {t.pos}: {where}\n" + (" " * t.pos) + "^",
-            )
-
-        ast = parse_expr()
-        _eat("EOF")
+                    getattr(e, "message", "Invalid filter expression."),
+                    hint=getattr(e, "hint", None),
+                ) from e
+            raise
 
         # ---------------- Compile/eval ----------------
         def _suggest(col: str) -> str:
@@ -1237,6 +1281,7 @@ class CastTransform(TransformImpl):
                         f"Internal error while casting value {v!r}: {type(e).__name__}: {e}",
                         hint="This should not happen. Please report a bug with a minimal reproducible example."
                     ) from e
+
             return f
 
         out = table
@@ -1382,7 +1427,8 @@ class ValidateTransform(TransformImpl):
                 try:
                     # Frictionless expects Schema-like objects; passing a raw dict can crash on some versions.
                     from frictionless import Schema as _FrSchema  # type: ignore
-                    schema_obj = _FrSchema.from_descriptor(sch) if hasattr(_FrSchema, "from_descriptor") else _FrSchema(sch)
+                    schema_obj = _FrSchema.from_descriptor(sch) if hasattr(_FrSchema, "from_descriptor") else _FrSchema(
+                        sch)
                 except Exception:
                     # Fall back to passing no schema if conversion fails; strict_schema above should catch missing schema.
                     schema_obj = None
@@ -1814,7 +1860,8 @@ class Pipeline:
             )
         return cls.from_ir(ir, base_dir=base_dir)
 
-    def save_yaml(self, path: Union[str, Path], *, lock_schema: bool = False, sample_rows: int = 200, force: bool = False) -> None:
+    def save_yaml(self, path: Union[str, Path], *, lock_schema: bool = False, sample_rows: int = 200,
+                  force: bool = False) -> None:
         """Write YAML IR to a file."""
         p = Path(path)
         p.write_text(self.to_yaml(lock_schema=lock_schema, sample_rows=sample_rows, force=force), encoding="utf-8")
@@ -1903,218 +1950,18 @@ class DeriveTransform(TransformImpl):
                 hint="Set params.overwrite=true to replace it, or choose a different params.new.",
             )
 
-        import re
         import difflib
 
-        # ---------------- Tokenizer ----------------
-        _re_ws = re.compile(r"\s+")
-        _re_ident = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-        _re_number = re.compile(r"(?:\d+\.\d*|\d*\.\d+|\d+)")
-
-        KEYWORDS = {"and", "or", "not", "true", "false", "null"}
-
-        class _Tok:
-            __slots__ = ("typ", "val", "pos")
-
-            def __init__(self, typ: str, val: Any, pos: int):
-                self.typ = typ
-                self.val = val
-                self.pos = pos
-
-        def _tokenize(src: str) -> List[_Tok]:
-            out: List[_Tok] = []
-            i = 0
-            n = len(src)
-            while i < n:
-                m = _re_ws.match(src, i)
-                if m:
-                    i = m.end()
-                    continue
-
-                # strings: single or double quoted, with basic escapes
-                if src[i] in ("'", '"'):
-                    q = src[i]
-                    j = i + 1
-                    buf = []
-                    while j < n:
-                        ch = src[j]
-                        if ch == "\\" and j + 1 < n:
-                            buf.append(src[j + 1])
-                            j += 2
-                            continue
-                        if ch == q:
-                            out.append(_Tok("STR", "".join(buf), i))
-                            i = j + 1
-                            break
-                        buf.append(ch)
-                        j += 1
-                    else:
-                        raise WowDataUserError(
-                            "E_DERIVE_PARSE",
-                            "Unterminated string literal in derive expression.",
-                            hint=src,
-                        )
-                    continue
-
-                # operators (longest-first)
-                two = src[i: i + 2]
-                if two in {"==", "!=", ">=", "<="}:
-                    out.append(_Tok("OP", two, i))
-                    i += 2
-                    continue
-
-                if src[i] in {">", "<", "(", ")", "+", "-", "*", "/"}:
-                    out.append(_Tok("OP", src[i], i))
-                    i += 1
-                    continue
-
-                # number
-                m = _re_number.match(src, i)
-                if m:
-                    s = m.group(0)
-                    out.append(_Tok("NUM", float(s) if ("." in s) else int(s), i))
-                    i = m.end()
-                    continue
-
-                # identifier/keyword
-                m = _re_ident.match(src, i)
-                if m:
-                    s = m.group(0)
-                    low = s.lower()
-                    if low in KEYWORDS:
-                        out.append(_Tok("KW", low, i))
-                    else:
-                        out.append(_Tok("IDENT", s, i))
-                    i = m.end()
-                    continue
-
+        try:
+            ast = _expr_parse(expr, allow_arith=True)
+        except WowDataUserError as e:
+            if getattr(e, "code", None) == "E_EXPR_PARSE":
                 raise WowDataUserError(
                     "E_DERIVE_PARSE",
-                    f"Unexpected character {src[i]!r} in derive expression.",
-                    hint=f"At position {i}: {src}\n" + (" " * i) + "^",
-                )
-
-            out.append(_Tok("EOF", None, n))
-            return out
-
-        toks = _tokenize(expr)
-        k = 0
-
-        def _peek() -> _Tok:
-            return toks[k]
-
-        def _eat(expected_typ: str, expected_val: Optional[str] = None) -> _Tok:
-            nonlocal k
-            t = toks[k]
-            if t.typ != expected_typ:
-                raise WowDataUserError(
-                    "E_DERIVE_PARSE",
-                    f"Expected {expected_typ} but found {t.typ}.",
-                    hint=f"At position {t.pos}: {expr}\n" + (" " * t.pos) + "^",
-                )
-            if expected_val is not None and t.val != expected_val:
-                raise WowDataUserError(
-                    "E_DERIVE_PARSE",
-                    f"Expected '{expected_val}' but found '{t.val}'.",
-                    hint=f"At position {t.pos}: {expr}\n" + (" " * t.pos) + "^",
-                )
-            k += 1
-            return t
-
-        # ---------------- Parser (precedence) ----------------
-        # or  -> and ( "or" and )*
-        # and -> cmp ( "and" cmp )*
-        # cmp -> add ( (==|!=|<|<=|>|>=) add )?
-        # add -> mul ( (+|-) mul )*
-        # mul -> unary ( (*|/) unary )*
-        # unary -> ("not" unary) | ("-" unary) | atom
-        # atom -> IDENT | NUM | STR | true/false/null | '(' expr ')'
-
-        def parse_expr():
-            return parse_or()
-
-        def parse_or():
-            node = parse_and()
-            while _peek().typ == "KW" and _peek().val == "or":
-                _eat("KW", "or")
-                rhs = parse_and()
-                node = ("or", node, rhs)
-            return node
-
-        def parse_and():
-            node = parse_cmp()
-            while _peek().typ == "KW" and _peek().val == "and":
-                _eat("KW", "and")
-                rhs = parse_cmp()
-                node = ("and", node, rhs)
-            return node
-
-        def parse_cmp():
-            left = parse_add()
-            if _peek().typ == "OP" and _peek().val in {"==", "!=", ">=", "<=", ">", "<"}:
-                op_tok = _eat("OP")
-                right = parse_add()
-                return ("cmp", op_tok.val, left, right)
-            return left
-
-        def parse_add():
-            node = parse_mul()
-            while _peek().typ == "OP" and _peek().val in {"+", "-"}:
-                op_tok = _eat("OP")
-                rhs = parse_mul()
-                node = ("bin", op_tok.val, node, rhs)
-            return node
-
-        def parse_mul():
-            node = parse_unary()
-            while _peek().typ == "OP" and _peek().val in {"*", "/"}:
-                op_tok = _eat("OP")
-                rhs = parse_unary()
-                node = ("bin", op_tok.val, node, rhs)
-            return node
-
-        def parse_unary():
-            if _peek().typ == "KW" and _peek().val == "not":
-                _eat("KW", "not")
-                inner = parse_unary()
-                return ("not", inner)
-            if _peek().typ == "OP" and _peek().val == "-":
-                _eat("OP", "-")
-                inner = parse_unary()
-                return ("neg", inner)
-            return parse_atom()
-
-        def parse_atom():
-            t = _peek()
-            if t.typ == "OP" and t.val == "(":
-                _eat("OP", "(")
-                node = parse_expr()
-                _eat("OP", ")")
-                return node
-            if t.typ == "IDENT":
-                _eat("IDENT")
-                return ("col", t.val, t.pos)
-            if t.typ == "NUM":
-                _eat("NUM")
-                return ("lit", t.val)
-            if t.typ == "STR":
-                _eat("STR")
-                return ("lit", t.val)
-            if t.typ == "KW" and t.val in {"true", "false", "null"}:
-                _eat("KW")
-                if t.val == "true":
-                    return ("lit", True)
-                if t.val == "false":
-                    return ("lit", False)
-                return ("lit", None)
-            raise WowDataUserError(
-                "E_DERIVE_PARSE",
-                f"Unexpected token '{t.val}' in derive expression.",
-                hint=f"At position {t.pos}: {expr}\n" + (" " * t.pos) + "^",
-            )
-
-        ast = parse_expr()
-        _eat("EOF")
+                    getattr(e, "message", "Invalid derive expression."),
+                    hint=getattr(e, "hint", None),
+                ) from e
+            raise
 
         # ---------------- Eval ----------------
         def _suggest(col: str) -> str:
