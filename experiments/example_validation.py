@@ -1,4 +1,4 @@
-from core import Transform
+from wowdata.models.transforms import Transform
 from wowdata.models.pipeline import Pipeline
 from wowdata.models.sources import Source
 

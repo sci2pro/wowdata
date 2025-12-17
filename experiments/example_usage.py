@@ -1,4 +1,4 @@
-from core import Transform
+from wowdata.models.transforms import Transform
 from wowdata.models.sinks import Sink
 from wowdata.models.sources import Source
 
