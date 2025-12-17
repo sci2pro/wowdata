@@ -6,11 +6,18 @@ from typing import List, Union, Optional, Dict, Any, Tuple
 
 import petl as etl
 
-from experiments.core import Transform, FrictionlessSchema, _transform_to_ir, _sink_to_ir, \
-    _source_to_ir, _normalize_ir, _source_from_ir, _transform_from_ir, _sink_from_ir, yaml
 from wowdata.errors import WowDataUserError
 from wowdata.models.sinks import Sink
 from wowdata.models.sources import Source
+from wowdata.models.transforms import Transform, _transform_from_ir
+from wowdata.schema import _source_to_ir, _sink_to_ir, _transform_to_ir, _source_from_ir, \
+    _sink_from_ir, _normalize_ir
+from wowdata.util import FrictionlessSchema
+
+try:
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover
+    yaml = None
 
 
 @dataclass

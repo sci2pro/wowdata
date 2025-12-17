@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Optional, Dict, Any
 
 import petl as etl
 
 from wowdata.errors import WowDataUserError
+from wowdata.util import _infer_type_from_uri
 
 
 @dataclass(frozen=True)
@@ -47,9 +47,3 @@ class Sink:
         return f'Sink("{self.uri}")  kind={self.type}'
 
 
-def _infer_type_from_uri(uri: str) -> Optional[str]:
-    ext = Path(uri).suffix.lower()
-    if ext == ".csv":
-        return "csv"
-    # todo: extend later: .xlsx, .parquet, db urls, s3://, http(s)://, etc.
-    return None

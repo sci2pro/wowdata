@@ -5,10 +5,14 @@ from typing import Optional, Union, Dict, Any, List
 
 import petl as etl
 
-from experiments.core import FrictionlessSchema, _normalize_inline_schema, Resource, Detector
-from wowdata.models.pipeline import Pipeline
-from wowdata.models.sinks import _infer_type_from_uri
 from wowdata.errors import WowDataUserError
+from wowdata.util import _infer_type_from_uri, FrictionlessSchema, _normalize_inline_schema
+
+try:
+    from frictionless import Resource, Detector
+except Exception:  # pragma: no cover
+    Resource = None
+    Detector = None
 
 
 @dataclass(frozen=True)
@@ -212,9 +216,9 @@ class Source:
         return hdr + sch + "\nPreview:\n" + self._preview_str()
 
     # ---------- Pipeline composition ----------
-    def __gt__(self, other: Any) -> "Pipeline":
-        """
-        Source > Transform or Source > Sink creates a Pipeline.
-        (Do NOT encourage chained a > b > c in one expression; Python chains comparisons.)
-        """
-        return Pipeline(self).then(other)
+    # def __gt__(self, other: Any) -> "Pipeline":
+    #     """
+    #     Source > Transform or Source > Sink creates a Pipeline.
+    #     (Do NOT encourage chained a > b > c in one expression; Python chains comparisons.)
+    #     """
+    #     return Pipeline(self).then(other)
