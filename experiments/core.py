@@ -1191,13 +1191,12 @@ class CastTransform(TransformImpl):
             def f(v: Any) -> Any:
                 try:
                     return conv(v)
-                except Exception:
+                except Exception as e:
                     if on_error == "fail":
-                        raise
+                        raise e
                     if on_error == "null":
                         return None
                     return v
-
             return f
 
         out = table
