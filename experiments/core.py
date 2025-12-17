@@ -2191,40 +2191,14 @@ class DeriveTransform(TransformImpl):
 
 @register_transform("join")
 class JoinTransform(TransformImpl):
-    """Join the current table with a right-hand Source.
-
-    Params:
-      - right: str | {uri,type,schema,options}
-      - on: [col, ...]                     (same key names on both sides)
-        OR left_on: [..] and right_on: [..]
-      - how: 'inner' | 'left' | 'right' | 'full'   (default 'inner')
-      - suffix_right: str (default '_r')           (applied to right-side non-key collisions)
-    """
-
     @classmethod
     def validate_params(cls, params: Dict[str, Any], input_schema: Optional[FrictionlessSchema] = None) -> None:
         right = params.get("right")
-        if right is None:
+        if not (isinstance(right, str) and right.strip()) and not isinstance(right, dict):
             raise WowDataUserError(
                 "E_JOIN_PARAMS",
-                "join requires params.right (a URI string or Source descriptor mapping).",
+                "join requires params.right as a URI string or a mapping descriptor.",
                 hint="Example: Transform('join', params={'right': 'other.csv', 'on': ['id']})",
-            )
-
-        how = params.get("how", "inner")
-        if how not in {"inner", "left", "right", "full"}:
-            raise WowDataUserError(
-                "E_JOIN_PARAMS",
-                "join params.how must be one of: 'inner', 'left', 'right', 'full'.",
-                hint="Example: Transform('join', params={'right': 'other.csv', 'on': ['id'], 'how': 'left'})",
-            )
-
-        suffix_right = params.get("suffix_right", "_r")
-        if not isinstance(suffix_right, str):
-            raise WowDataUserError(
-                "E_JOIN_PARAMS",
-                "join params.suffix_right must be a string.",
-                hint="Example: Transform('join', params={'right': 'other.csv', 'on': ['id'], 'suffix_right': '_rhs'})",
             )
 
         on = params.get("on")
@@ -2232,63 +2206,70 @@ class JoinTransform(TransformImpl):
         right_on = params.get("right_on")
 
         if on is not None:
-            if not isinstance(on, list) or not on or not all(isinstance(c, str) and c for c in on):
+            if not isinstance(on, list) or not on or not all(isinstance(x, str) and x for x in on):
                 raise WowDataUserError(
                     "E_JOIN_PARAMS",
-                    "join params.on must be a non-empty list of column names.",
-                    hint="Example: Transform('join', params={'right': 'other.csv', 'on': ['person_id']})",
+                    "join params.on must be a non-empty list of column name strings.",
+                    hint="Example: params={'right': 'other.csv', 'on': ['person_id']}",
+                )
+            if left_on is not None or right_on is not None:
+                raise WowDataUserError(
+                    "E_JOIN_PARAMS",
+                    "join accepts either params.on OR params.left_on/params.right_on, not both.",
+                    hint="Use params.on when the key names are the same on both sides.",
                 )
         else:
-            if not (isinstance(left_on, list) and isinstance(right_on, list) and left_on and right_on):
+            if left_on is None or right_on is None:
                 raise WowDataUserError(
                     "E_JOIN_PARAMS",
-                    "join requires either params.on or both params.left_on and params.right_on.",
-                    hint="Example: Transform('join', params={'right': 'other.csv', 'left_on': ['id'], 'right_on': ['pid']})",
+                    "join requires either params.on OR both params.left_on and params.right_on.",
+                    hint="Example: params={'right': 'other.csv', 'left_on': ['id'], 'right_on': ['person_id']}",
+                )
+            if not isinstance(left_on, list) or not left_on or not all(isinstance(x, str) and x for x in left_on):
+                raise WowDataUserError(
+                    "E_JOIN_PARAMS",
+                    "join params.left_on must be a non-empty list of column name strings.",
+                    hint="Example: left_on: ['id']",
+                )
+            if not isinstance(right_on, list) or not right_on or not all(isinstance(x, str) and x for x in right_on):
+                raise WowDataUserError(
+                    "E_JOIN_PARAMS",
+                    "join params.right_on must be a non-empty list of column name strings.",
+                    hint="Example: right_on: ['person_id']",
                 )
             if len(left_on) != len(right_on):
                 raise WowDataUserError(
                     "E_JOIN_PARAMS",
-                    "join params.left_on and params.right_on must have the same length.",
-                    hint="Example: left_on=['a','b'], right_on=['x','y']",
-                )
-            if not all(isinstance(c, str) and c for c in left_on + right_on):
-                raise WowDataUserError(
-                    "E_JOIN_PARAMS",
-                    "join key columns must be non-empty strings.",
-                    hint="Example: left_on=['id'], right_on=['person_id']",
+                    "join params.left_on and params.right_on must be the same length.",
+                    hint=f"Got left_on={left_on} and right_on={right_on}.",
                 )
 
-        # Early check: left keys exist in current schema if available
-        left_names = set(_schema_field_names(input_schema))
-        if left_names:
-            keys = on if on is not None else (left_on or [])
-            missing = [c for c in keys if c not in left_names]
-            if missing:
-                raise WowDataUserError(
-                    "E_JOIN_LEFT_KEYS",
-                    "join key column(s) not present in left schema: " + str(missing) + ".",
-                    hint="Check spelling/case, or cast/derive/select earlier so the join keys exist.",
-                )
+        how = params.get("how", "inner")
+        if how not in {"inner", "left", "right", "outer"}:
+            raise WowDataUserError(
+                "E_JOIN_PARAMS",
+                "join params.how must be one of: inner, left, right, outer.",
+                hint="Example: Transform('join', params={..., 'how': 'left'})",
+            )
 
-        # Validate right descriptor shape (do not read file here)
-        _ = _source_from_descriptor(right)
+        strict_types = params.get("strict_types", True)
+        if not isinstance(strict_types, bool):
+            raise WowDataUserError(
+                "E_JOIN_PARAMS",
+                "join params.strict_types must be a boolean.",
+                hint="Example: Transform('join', params={..., 'strict_types': false})",
+            )
 
     @classmethod
     def apply(cls, table, *, params: Dict[str, Any], context: "PipelineContext"):
-        left_cols = list(etl.header(table))
-        left_colset = set(left_cols)
-
-        right_src = _source_from_descriptor(params.get("right"))
-        right_tbl = right_src.table()
-        right_cols = list(etl.header(right_tbl))
-        right_colset = set(right_cols)
-
+        right_desc = params.get("right")
         on = params.get("on")
         left_on = params.get("left_on")
         right_on = params.get("right_on")
         how = params.get("how", "inner")
-        suffix_right = params.get("suffix_right", "_r")
+        strict_types = params.get("strict_types", True)
 
+        # Resolve join key lists
         if on is not None:
             left_keys = list(on)
             right_keys = list(on)
@@ -2296,102 +2277,155 @@ class JoinTransform(TransformImpl):
             left_keys = list(left_on)
             right_keys = list(right_on)
 
-        # Execution-time truth: key presence
-        missing_left = [c for c in left_keys if c not in left_colset]
-        if missing_left:
-            raise WowDataUserError(
-                "E_JOIN_LEFT_KEYS",
-                "join key column(s) not present in left table: " + str(missing_left) + ".",
-                hint="Inspect the left table header (print(Source(...))) and ensure keys exist.",
-            )
-        missing_right = [c for c in right_keys if c not in right_colset]
-        if missing_right:
-            raise WowDataUserError(
-                "E_JOIN_RIGHT_KEYS",
-                "join key column(s) not present in right table: " + str(missing_right) + ".",
-                hint="Inspect the right Source and ensure keys exist.",
-            )
-
-        # Avoid name collisions from right (except join keys)
-        collisions = (left_colset & right_colset) - set(right_keys)
-        if collisions:
-            rename_map = {c: f"{c}{suffix_right}" for c in collisions}
-            right_tbl = etl.rename(right_tbl, rename_map)
-
-        # Pick join fn based on how (petl naming varies by version)
-        if how == "inner":
-            join_fn = getattr(etl, "join", None)
-        elif how == "left":
-            join_fn = getattr(etl, "leftjoin", None)
-        elif how == "right":
-            join_fn = getattr(etl, "rightjoin", None)
-        else:
-            join_fn = getattr(etl, "outerjoin", None)
-
-        if join_fn is None:
-            raise WowDataUserError(
-                "E_JOIN_UNSUPPORTED",
-                "Your installed petl version does not provide the required join function.",
-                hint="Upgrade petl, or use how='inner' if only etl.join is available.",
-            )
-
-        # If key names match, use petl key directly
-        if left_keys == right_keys:
-            key = left_keys if len(left_keys) > 1 else left_keys[0]
-            return join_fn(table, right_tbl, key=key)
-
-        # If key names differ, join via a temporary synthetic key
-        tmp = "__wow_join_key__"
-        if tmp in left_colset or tmp in right_colset:
-            tmp = "__wow_join_key2__"
-
-        def _mk_key(row, cols: List[str]):
-            if len(cols) == 1:
-                return row[cols[0]]
-            return tuple(row[c] for c in cols)
-
-        left2 = etl.addfield(table, tmp, lambda r: _mk_key(r, left_keys))
-        right2 = etl.addfield(right_tbl, tmp, lambda r: _mk_key(r, right_keys))
-
-        joined = join_fn(left2, right2, key=tmp)
-        return etl.cutout(joined, tmp)
-
-    @classmethod
-    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[
-        FrictionlessSchema]:
-        # Best-effort: merge left schema with inferred right schema (bounded inference).
-        left_fields = []
-        if input_schema and isinstance(input_schema, dict):
-            left_fields = [f for f in (input_schema.get("fields") or []) if isinstance(f, dict)]
-
+        # Build right Source
         try:
-            right_src = _source_from_descriptor(params.get("right"))
-            right_schema = right_src.peek_schema()
-        except Exception:
-            right_schema = {"fields": []}
+            right_src = _source_from_descriptor(right_desc)
+        except WowDataUserError:
+            raise
+        except Exception as e:
+            raise WowDataUserError(
+                "E_JOIN_PARAMS",
+                "join params.right could not be interpreted as a source descriptor.",
+                hint="Use a URI string like 'other.csv' or a mapping like {'uri': 'other.csv', 'options': {...}}.",
+            ) from e
 
-        right_fields = [f for f in (right_schema.get("fields") or []) if isinstance(f, dict)]
+        # Materialize right table safely
+        try:
+            right_table = right_src.table()
+        except WowDataUserError:
+            raise
+        except Exception as e:
+            raise WowDataUserError(
+                "E_JOIN_RIGHT_READ",
+                "join could not read the right-hand source.",
+                hint="Check the right uri/path, type, and options (delimiter/encoding).",
+            ) from e
 
-        on = params.get("on")
-        right_on = params.get("right_on")
-        suffix_right = params.get("suffix_right", "_r")
+        # Column existence checks (teach before PETL crashes)
+        try:
+            left_header = list(etl.header(table))
+            right_header = list(etl.header(right_table))
+        except Exception as e:
+            raise WowDataUserError(
+                "E_JOIN_READ_HEADERS",
+                f"join could not read table headers: {e}",
+                hint="Ensure both sources are tabular and readable (CSV delimiter/encoding).",
+            ) from e
 
-        right_key_names = set(on) if on is not None else set(right_on or [])
+        left_missing = [c for c in left_keys if c not in left_header]
+        right_missing = [c for c in right_keys if c not in right_header]
+        if left_missing or right_missing:
+            msg_parts = []
+            if left_missing:
+                msg_parts.append(f"missing on left: {left_missing}")
+            if right_missing:
+                msg_parts.append(f"missing on right: {right_missing}")
+            raise WowDataUserError(
+                "E_JOIN_UNKNOWN_COL",
+                "join key column(s) not found (" + "; ".join(msg_parts) + ").",
+                hint="Check spelling/case. If key names differ, use left_on/right_on.",
+            )
 
-        left_names = {f.get("name") for f in left_fields if isinstance(f.get("name"), str)}
-        out_fields: List[Dict[str, Any]] = [dict(f) for f in left_fields]
+        # Type surprise guard (optional)
+        def _wow_type(v: Any) -> str:
+            if v is None:
+                return "null"
+            if isinstance(v, bool):
+                return "boolean"
+            if isinstance(v, int) and not isinstance(v, bool):
+                return "integer"
+            if isinstance(v, float):
+                return "number"
+            try:
+                from datetime import date, datetime
+                if isinstance(v, datetime):
+                    return "datetime"
+                if isinstance(v, date):
+                    return "date"
+            except Exception:
+                pass
+            return "string"
 
-        for f in right_fields:
-            name = f.get("name")
-            if not isinstance(name, str):
-                continue
-            if name in right_key_names and name in left_names:
-                continue
-            if name in left_names:
-                rf = dict(f)
-                rf["name"] = f"{name}{suffix_right}"
-                out_fields.append(rf)
+        def _predominant_type(tbl, col: str, hdr: List[str]) -> str:
+            counts: Dict[str, int] = {}
+            try:
+                sample_rows = list(etl.data(etl.head(tbl, 51)))  # 50 data rows
+            except Exception:
+                return "unknown"
+
+            # index fallback for sequence rows
+            try:
+                idx = hdr.index(col)
+            except Exception:
+                idx = None
+
+            for r in sample_rows:
+                v = None
+                if isinstance(r, dict):
+                    v = r.get(col)
+                else:
+                    try:
+                        v = r[col]  # petl Record supports name access
+                    except Exception:
+                        if idx is not None and isinstance(r, (list, tuple)) and idx < len(r):
+                            v = r[idx]
+                t = _wow_type(v)
+                counts[t] = counts.get(t, 0) + 1
+
+            # ignore nulls if there is any non-null evidence
+            if "null" in counts and len(counts) > 1:
+                counts2 = dict(counts)
+                counts2.pop("null", None)
+                counts = counts2 or counts
+
+            return max(counts.items(), key=lambda kv: kv[1])[0] if counts else "unknown"
+
+        if strict_types:
+            mismatches = []
+            for lk, rk in zip(left_keys, right_keys):
+                lt = _predominant_type(table, lk, left_header)
+                rt = _predominant_type(right_table, rk, right_header)
+                if lt != "unknown" and rt != "unknown" and lt != rt:
+                    mismatches.append((lk, rk, lt, rt))
+            if mismatches:
+                parts = [f"{lk!r}->{rk!r}: left looks {lt!r}, right looks {rt!r}" for (lk, rk, lt, rt) in mismatches]
+                raise WowDataUserError(
+                    "E_JOIN_KEY_TYPE_MISMATCH",
+                    "join key type mismatch (this often causes empty joins or surprising coercions).",
+                    hint="; ".join(parts) + ". Fix by casting one side before join, or set strict_types=false.",
+                )
+
+        # Execute PETL join, wrapped
+        try:
+            join_fn = {
+                "inner": etl.join,
+                "left": etl.leftjoin,
+                "right": etl.rightjoin,
+                "outer": etl.outerjoin,
+            }[how]
+
+            if on is not None:
+                out = join_fn(table, right_table, key=left_keys if len(left_keys) > 1 else left_keys[0])
             else:
-                out_fields.append(dict(f))
+                # petl join APIs accept lkey/rkey for different key names
+                lkey = left_keys if len(left_keys) > 1 else left_keys[0]
+                rkey = right_keys if len(right_keys) > 1 else right_keys[0]
+                out = join_fn(table, right_table, lkey=lkey, rkey=rkey)
 
-        return {"fields": out_fields}
+            return out
+
+        except WowDataUserError:
+            raise
+        except Exception as e:
+            # Teach common causes rather than leaking PETL internals
+            key_hint = f"keys: left={left_keys} right={right_keys} (how={how})"
+            raise WowDataUserError(
+                "E_JOIN_FAILED",
+                "join failed while combining tables.",
+                hint=(
+                    f"{key_hint}. Common causes: missing key columns, key type mismatches, "
+                    "or duplicate keys creating many-to-many matches. "
+                    "Try: (1) validate both sources, (2) cast join keys to the same type, "
+                    "(3) inspect duplicates on the join keys."
+                ),
+            ) from e
