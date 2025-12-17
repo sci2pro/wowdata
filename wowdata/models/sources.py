@@ -6,13 +6,9 @@ from typing import Optional, Union, Dict, Any, List
 import petl as etl
 
 from wowdata.errors import WowDataUserError
-from wowdata.util import _infer_type_from_uri, FrictionlessSchema, _normalize_inline_schema
+from wowdata.util import _infer_type_from_uri, FrictionlessSchema, _normalize_inline_schema, Resource, Detector
 
-try:
-    from frictionless import Resource, Detector
-except Exception:  # pragma: no cover
-    Resource = None
-    Detector = None
+
 
 
 @dataclass(frozen=True)
@@ -222,3 +218,33 @@ class Source:
     #     (Do NOT encourage chained a > b > c in one expression; Python chains comparisons.)
     #     """
     #     return Pipeline(self).then(other)
+
+
+def _source_from_descriptor(desc: Union[str, Dict[str, Any]]) -> Source:
+    """Create a Source from a descriptor.
+
+    Supported forms:
+      - string URI: "file.csv"
+      - mapping: {"uri": "file.csv", "type": "csv", "schema": {...}, "options": {...}}
+    """
+    if isinstance(desc, str):
+        return Source(desc)
+    if isinstance(desc, dict):
+        uri = desc.get("uri")
+        if not isinstance(uri, str) or not uri:
+            raise WowDataUserError(
+                "E_JOIN_RIGHT",
+                "join params.right mapping must include a non-empty 'uri' string.",
+                hint="Example: {'uri': 'other.csv', 'type': 'csv', 'options': {...}}",
+            )
+        return Source(
+            uri,
+            type=desc.get("type"),
+            schema=desc.get("schema"),
+            options=desc.get("options") or {},
+        )
+    raise WowDataUserError(
+        "E_JOIN_RIGHT",
+        "join params.right must be a URI string or a mapping descriptor.",
+        hint="Example: Transform('join', params={'right': 'other.csv', 'on': ['id']})",
+    )

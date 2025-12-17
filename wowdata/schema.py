@@ -1,43 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Any, Union, Optional, List
+from typing import Dict, Any, Optional, List
 
 from wowdata.errors import WowDataUserError
 from wowdata.models.sources import Source
 from wowdata.models.sinks import Sink
 from wowdata.models.transforms import Transform
 from wowdata.util import _norm_path, FrictionlessSchema
-
-
-def _source_from_descriptor(desc: Union[str, Dict[str, Any]]) -> Source:
-    """Create a Source from a descriptor.
-
-    Supported forms:
-      - string URI: "file.csv"
-      - mapping: {"uri": "file.csv", "type": "csv", "schema": {...}, "options": {...}}
-    """
-    if isinstance(desc, str):
-        return Source(desc)
-    if isinstance(desc, dict):
-        uri = desc.get("uri")
-        if not isinstance(uri, str) or not uri:
-            raise WowDataUserError(
-                "E_JOIN_RIGHT",
-                "join params.right mapping must include a non-empty 'uri' string.",
-                hint="Example: {'uri': 'other.csv', 'type': 'csv', 'options': {...}}",
-            )
-        return Source(
-            uri,
-            type=desc.get("type"),
-            schema=desc.get("schema"),
-            options=desc.get("options") or {},
-        )
-    raise WowDataUserError(
-        "E_JOIN_RIGHT",
-        "join params.right must be a URI string or a mapping descriptor.",
-        hint="Example: Transform('join', params={'right': 'other.csv', 'on': ['id']})",
-    )
 
 
 def _schema_field_names(schema: Optional[FrictionlessSchema]) -> List[str]:

@@ -5,6 +5,12 @@ from typing import Optional, Dict, Any
 
 from wowdata.errors import WowDataUserError
 
+try:
+    from frictionless import Resource, Detector
+except Exception:  # pragma: no cover
+    Resource = None
+    Detector = None
+
 
 def _is_probably_url(s: str) -> bool:
     return s.startswith("http://") or s.startswith("https://") or s.startswith("s3://")

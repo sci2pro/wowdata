@@ -18,4 +18,5 @@ pipe = (
     .then(Transform("derive", params={"new": "age", "expr": "age + 1", "overwrite": True}))
     .then(Sink("out_derive2.csv"))
 )
+print(pipe)
 pipe.run()

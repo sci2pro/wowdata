@@ -6,8 +6,8 @@ from typing import Dict, Any, Optional, Type, Callable, List, Tuple
 import petl as etl
 
 from wowdata.errors import WowDataUserError
-from wowdata.schema import _source_from_descriptor
-from wowdata.util import FrictionlessSchema
+from wowdata.util import FrictionlessSchema, Resource
+from wowdata.models.sources import _source_from_descriptor
 
 
 class TransformImpl:
