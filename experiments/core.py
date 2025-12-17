@@ -1614,6 +1614,16 @@ class Pipeline:
                 "Pipeline.then expects a Transform or Sink.",
                 hint="Example: pipe.then(Transform('select', params={...})) or pipe.then(Sink('out.csv')).",
             )
+
+        # Enforce Source -> Transform* -> Sink* mental model: no transforms after a sink.
+        if isinstance(step, Transform):
+            if any(isinstance(s, Sink) for s in self.steps):
+                raise WowDataUserError(
+                    "E_PIPELINE_ORDER",
+                    "A Transform cannot be added after a Sink.",
+                    hint="Move the Sink to the end of the pipeline, or create a new Pipeline starting from the Sink output.",
+                )
+
         return Pipeline(self.start, self.steps + [step])
 
     def __str__(self) -> str:
@@ -1627,13 +1637,65 @@ class Pipeline:
         ctx.schema = self.start.peek_schema()
         table = self.start.table()
 
-        for step in self.steps:
+        saw_sink = False
+        for i, step in enumerate(self.steps):
             if isinstance(step, Transform):
+                if saw_sink:
+                    # Defensive: should be prevented by Pipeline.then / from_ir, but enforce at runtime too.
+                    raise WowDataUserError(
+                        "E_PIPELINE_ORDER",
+                        f"Transform '{step.op}' appears after a Sink at step index {i}.",
+                        hint="Reorder the pipeline so that all sinks come last.",
+                    )
+
                 table = step.apply(table, context=ctx)
                 # keep a best-effort running schema for better validation and UI
                 ctx.schema = step.output_schema(ctx.schema)
+
+                # Deterministic checkpoint: record what happened after each transform.
+                try:
+                    hdr = list(etl.header(table))
+                except Exception:
+                    hdr = []
+                try:
+                    # Fixed-size preview: header + up to 5 data rows. Deterministic and inspectable.
+                    preview_tbl = etl.head(table, 6)
+                    preview_rows = list(etl.data(preview_tbl))
+                except Exception:
+                    preview_rows = []
+
+                ctx.checkpoints.append(
+                    (
+                        "step",
+                        {
+                            "index": i,
+                            "kind": "transform",
+                            "op": step.op,
+                            "params": dict(step.params),
+                            "header": hdr,
+                            "preview": preview_rows,
+                        },
+                    )
+                )
+
             elif isinstance(step, Sink):
+                saw_sink = True
                 step.write(table)
+
+                # Deterministic checkpoint: record sink execution.
+                ctx.checkpoints.append(
+                    (
+                        "step",
+                        {
+                            "index": i,
+                            "kind": "sink",
+                            "uri": step.uri,
+                            "type": step.type,
+                            "options": dict(step.options),
+                        },
+                    )
+                )
+
             else:
                 raise WowDataUserError(
                     "E_PIPELINE_STEP_TYPE",

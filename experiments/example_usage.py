@@ -17,4 +17,4 @@ pipe = pipe.then(
 )
 pipe = pipe.then(Sink("out.csv"))
 ctx = pipe.run()
-print(ctx.checkpoints)
+print(f"checkpoints: {ctx.checkpoints}")
