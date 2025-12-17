@@ -1131,7 +1131,11 @@ class CastTransform(TransformImpl):
                     return True
                 if s in {"false", "f", "no", "n", "0"}:
                     return False
-            raise ValueError(f"Cannot coerce {v!r} to boolean")
+            raise WowDataUserError(
+                "E_CAST_TYPE",
+                f"Cannot coerce value {v!r} to boolean.",
+                hint="Ensure the column contains values like true/false, yes/no, 1/0, or cast it to string first."
+            )
 
         def _to_str(v: Any) -> Any:
             if v is None:
@@ -1152,7 +1156,11 @@ class CastTransform(TransformImpl):
                 if s == "":
                     return None
                 return date.fromisoformat(s)
-            raise ValueError(f"Cannot coerce {v!r} to date")
+            raise WowDataUserError(
+                "E_CAST_TYPE",
+                f"Cannot coerce value {v!r} to date.",
+                hint="Ensure the value is an ISO date string (YYYY-MM-DD) or cast it to string first."
+            )
 
         def _to_datetime(v: Any) -> Any:
             if v is None:
@@ -1164,7 +1172,11 @@ class CastTransform(TransformImpl):
                 if s == "":
                     return None
                 return datetime.fromisoformat(s)
-            raise ValueError(f"Cannot coerce {v!r} to datetime")
+            raise WowDataUserError(
+                "E_CAST_TYPE",
+                f"Cannot coerce value {v!r} to datetime.",
+                hint="Ensure the value is an ISO datetime string (YYYY-MM-DDTHH:MM:SS) or cast it to string first."
+            )
 
         converters = {
             "integer": _to_int,
