@@ -1,10 +1,9 @@
-from wowdata.models.transforms import Transform
-from wowdata.models.pipeline import Pipeline
-from wowdata.models.sinks import Sink
-from wowdata.models.sources import Source
 from wowdata.errors import WowDataUserError
+from wowdata import Transform, Source, Sink, Pipeline
 
-s = Source("people.csv")
+from wowdata.tests import DATA_DIR
+
+s = Source(DATA_DIR / "people.csv")
 
 pipe = (
     Pipeline(s)
@@ -15,7 +14,7 @@ pipe = (
         "types": {"age": "integer", "income": "number"},
         "on_error": "null",
     }))
-    .then(Sink("out_should_not_write.csv"))
+    .then(Sink(DATA_DIR / "out_should_not_write.csv"))
 )
 
 print(pipe)

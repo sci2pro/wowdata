@@ -1,7 +1,6 @@
-from wowdata.models.transforms import Transform
-from wowdata.models.pipeline import Pipeline
-from wowdata.models.sources import Source
+from wowdata import Transform, Source, Sink, Pipeline
 
+from wowdata.tests import DATA_DIR
 # Inline schema so validate has something authoritative to check
 schema = {
     "fields": [
@@ -23,13 +22,13 @@ def run(path, fail=True, strict_schema=True):
 
 
 print("=== OK ===")
-run("../wowdata/tests/data/people_ok.csv")
+run(DATA_DIR / "people_ok.csv")
 
 print("\n=== BAD (fail=True) ===")
 try:
-    run("../wowdata/tests/data/people_bad.csv", fail=True)
+    run(DATA_DIR / "people_bad.csv", fail=True)
 except Exception as e:
     print("Raised:", type(e).__name__, e)
 
 print("\n=== BAD (fail=False) ===")
-run("../wowdata/tests/data/people_bad.csv", fail=False)
+run(DATA_DIR / "people_bad.csv", fail=False)

@@ -1,9 +1,8 @@
-from wowdata.models.transforms import Transform
-from wowdata.models.pipeline import Pipeline
-from wowdata.models.sinks import Sink
-from wowdata.models.sources import Source
+from wowdata import Transform, Source, Sink, Pipeline
 
-s = Source("people.csv")
+from wowdata.tests import DATA_DIR
+
+s = Source(DATA_DIR / "people.csv")
 
 pipe = (
     Pipeline(s)
@@ -18,7 +17,7 @@ pipe = (
         "sample_rows": 200,  # later: used by frictionless detector/validator
     }))
     .then(Transform("select", params={"columns": ["person_id", "age", "income", "country"]}))
-    .then(Sink("out_validate.csv"))
+    .then(Sink(DATA_DIR / "out_validate.csv"))
 )
 
 print(pipe)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
+import os
 
 import petl as etl
 
@@ -32,10 +33,46 @@ class Sink:
                 hint="Currently supported sink types: csv.",
             )
 
+        # Fail fast: ensure the output directory exists and is writable before running the pipeline.
+        if self.type == "csv":
+            parent = os.path.dirname(self.uri) or "."
+            if not os.path.isdir(parent):
+                raise WowDataUserError(
+                    "E_SINK_DIR_NOT_FOUND",
+                    f"Output directory does not exist: '{parent}'.",
+                    hint="Create the directory or choose a different output path.",
+                )
+            if not os.access(parent, os.W_OK):
+                raise WowDataUserError(
+                    "E_SINK_NOT_WRITABLE",
+                    f"Output directory is not writable: '{parent}'.",
+                    hint="Check permissions or choose a different output location.",
+                )
+
     def write(self, table) -> None:
         if self.type == "csv":
-            # PETL tocsv writes table to CSV
-            etl.tocsv(table, self.uri, **self.options)
+            try:
+                etl.tocsv(table, self.uri, **self.options)
+            except FileNotFoundError as e:
+                parent = os.path.dirname(self.uri) or "."
+                raise WowDataUserError(
+                    "E_SINK_DIR_NOT_FOUND",
+                    f"Output directory does not exist: '{parent}'.",
+                    hint="Create the directory or choose a different output path.",
+                ) from e
+            except PermissionError as e:
+                parent = os.path.dirname(self.uri) or "."
+                raise WowDataUserError(
+                    "E_SINK_NOT_WRITABLE",
+                    f"Cannot write to output directory: '{parent}'.",
+                    hint="Check permissions or choose a different output location.",
+                ) from e
+            except Exception as e:
+                raise WowDataUserError(
+                    "E_SINK_WRITE",
+                    f"Could not write sink '{self.uri}': {type(e).__name__}: {e}",
+                    hint="Check file permissions and Sink options (delimiter/encoding).",
+                ) from e
             return
         raise WowDataUserError(
             "E_SINK_WRITE_UNSUPPORTED",

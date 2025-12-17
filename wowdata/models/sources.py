@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Optional, Union, Dict, Any, List
+import os
 
 import petl as etl
 
@@ -46,6 +47,18 @@ class Source:
         if self.schema is not None and isinstance(self.schema, dict):
             _normalize_inline_schema(self.schema)
 
+        # Fail fast: CSV sources are file-based and PETL opens them lazily.
+        # Catch missing files at construction time so users learn early.
+        if self.type == "csv":
+            # Treat non-empty URIs with a path separator or a .csv suffix as local paths.
+            # (If you later support URLs, you can relax this check.)
+            if not os.path.exists(self.uri):
+                raise WowDataUserError(
+                    "E_SOURCE_NOT_FOUND",
+                    f"Source file not found: '{self.uri}'.",
+                    hint="Check the path, working directory, and filename. If the file is elsewhere, pass an absolute path.",
+                )
+
     # ---------- PETL table (lazy) ----------
     def table(self):
         """
@@ -53,7 +66,20 @@ class Source:
         """
         if self.type == "csv":
             # PETL fromcsv supports kwargs like delimiter, encoding, etc.
-            return etl.fromcsv(self.uri, **self.options)
+            try:
+                return etl.fromcsv(self.uri, **self.options)
+            except FileNotFoundError as e:
+                raise WowDataUserError(
+                    "E_SOURCE_NOT_FOUND",
+                    f"Source file not found: '{self.uri}'.",
+                    hint="Check the path, working directory, and filename. If the file is elsewhere, pass an absolute path.",
+                ) from e
+            except Exception as e:
+                raise WowDataUserError(
+                    "E_SOURCE_READ",
+                    f"Could not open source '{self.uri}': {type(e).__name__}: {e}",
+                    hint="Check file permissions and Source options (delimiter/encoding).",
+                ) from e
         raise WowDataUserError(
             "E_SOURCE_TABLE_UNSUPPORTED",
             f"Source type '{self.type}' cannot be materialized as a table in v0.",

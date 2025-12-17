@@ -1,10 +1,8 @@
+from wowdata import Transform, Source, Sink, Pipeline
 from wowdata.errors import WowDataUserError
-from wowdata.models.pipeline import Pipeline
-from wowdata.models.sinks import Sink
-from wowdata.models.sources import Source
-from wowdata.models.transforms import Transform
+from wowdata.tests import DATA_DIR
 
-s = Source("people.csv")
+s = Source(DATA_DIR / "people.csv")
 
 pipe = (
     Pipeline(s)
@@ -13,7 +11,7 @@ pipe = (
         # placeholder until the expression compiler exists
         "where": "age >= 30 and country == 'KE'"
     }))
-    .then(Sink("out_filter.csv"))
+    .then(Sink(DATA_DIR / "out_filter.csv"))
 )
 
 print(pipe)
