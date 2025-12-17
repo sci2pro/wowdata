@@ -53,7 +53,47 @@ class Pipeline:
             parts.append(f"  -> {s}")
         return "\n".join(parts)
 
+    def preflight(self) -> None:
+        """
+        Validate sources and sinks before executing the pipeline.
+
+        This checks:
+        - Source readability / existence
+        - Sink writability / destination validity
+        - Pipeline ordering invariants (defensive)
+        """
+        # Validate source early
+        try:
+            self.start.preflight()
+        except AttributeError:
+            # Backward compatibility: Source may already fail-fast in __post_init__
+            pass
+
+        saw_sink = False
+        for i, step in enumerate(self.steps):
+            if isinstance(step, Transform):
+                if saw_sink:
+                    raise WowDataUserError(
+                        "E_PIPELINE_ORDER",
+                        f"Transform '{step.op}' appears after a Sink at step index {i}.",
+                        hint="Reorder the pipeline so that all sinks come last.",
+                    )
+            elif isinstance(step, Sink):
+                saw_sink = True
+                try:
+                    step.preflight()
+                except AttributeError:
+                    # Sink may already fail-fast in __post_init__
+                    pass
+            else:
+                raise WowDataUserError(
+                    "E_PIPELINE_STEP_TYPE",
+                    "Pipeline contains an unknown step type.",
+                    hint="This should not happen if you only add Transform/Sink via Pipeline.then().",
+                )
+
     def run(self) -> PipelineContext:
+        self.preflight()
         ctx = PipelineContext()
         ctx.schema = self.start.peek_schema()
         table = self.start.table()
