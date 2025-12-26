@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wowdata"
+version = "0.1.0"
+description = "A human-centred, teachable data wrangling and pipeline framework."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+  { name = "WowData Contributors" }
+]
+requires-python = ">=3.10"
+
+dependencies = [
+  "petl>=1.7",
+  "frictionless>=5.0",
+]
+
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Education",
+  "Intended Audience :: Developers",
+  "Topic :: Software Development :: Libraries",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+
+keywords = [
+  "data-engineering",
+  "etl",
+  "data-pipelines",
+  "education",
+  "data-wrangling",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0",
+  "pytest-cov",
+  "black",
+  "ruff",
+  "mypy",
+]
+
+docs = [
+  "mkdocs",
+  "mkdocs-material",
+]
+
+[project.urls]
+Homepage = "https://github.com/sci2pro/wowdata"
+Repository = "https://github.com/sci2pro/wowdata"
+Issues = "https://github.com/sci2pro/wowdata/issues"
+
+[tool.setuptools]
+packages = ["wowdata"]
+
+[tool.setuptools.package-data]
+wowdata = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["wowdata/tests"]
+addopts = "-q"
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = false
+warn_return_any = true
+warn_unused_configs = true
