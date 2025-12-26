@@ -1,18 +1,18 @@
-# **WowData**
+# **WowData™**
 
-**WowData makes complex data engineering tasks easy for ordinary users.**
+**WowData™ makes complex data engineering tasks easy for ordinary users.**
 
-WowData is a human-centred data wrangling and pipeline framework designed to make advanced data preparation *understandable*, *teachable*, and *inspectable*—without sacrificing power.
+WowData™ is a human-centred data wrangling and pipeline framework designed to make advanced data preparation *understandable*, *teachable*, and *inspectable*—without sacrificing power.
 
 It is built for people who need to work with real data, not just programmers.
 
 ---
 
-## **Why WowData?**
+## **Why WowData™?**
 
 Most data tools assume that if you are touching data, you are already an expert.
 
-WowData rejects this assumption.
+WowData™ rejects this assumption.
 
 We believe that:
 
@@ -22,13 +22,13 @@ We believe that:
 
 * and tools should teach rather than intimidate.
 
-WowData is designed so that **anyone can build, read, and reason about a data pipeline**—even when that pipeline performs non-trivial work.
+WowData™ is designed so that **anyone can build, read, and reason about a data pipeline**—even when that pipeline performs non-trivial work.
 
 ---
 
 ## **Core Concepts**
 
-WowData is built on four stable, universal concepts:
+WowData™ is built on four stable, universal concepts:
 
 * **Source** — where data comes from
 
@@ -42,7 +42,7 @@ These concepts are deliberately persistent and reused everywhere.
 
 We avoid hidden helpers, magical shortcuts, and proliferating abstractions.
 
-If you understand these four ideas, you understand WowData.
+If you understand these four ideas, you understand WowData™.
 
 ---
 
@@ -77,7 +77,7 @@ Nothing is hidden. Nothing is inferred without consent.
 
 ## **Learning-First by Design**
 
-WowData makes deliberate trade-offs to accelerate learning:
+WowData™ makes deliberate trade-offs to accelerate learning:
 
 * A **small, closed vocabulary** of concepts
 
@@ -95,7 +95,7 @@ If a feature makes learning harder—even if it saves time—we reject it.
 
 ## **Serialization That Humans Can Read**
 
-Every WowData pipeline can be serialized into a human-readable form.
+Every WowData™ pipeline can be serialized into a human-readable form.
 
 Serialization is not configuration for machines—it is a **cognitive artifact** for people.
 
@@ -113,7 +113,7 @@ Our goal is that an ordinary user can:
 
 ## **Errors That Teach**
 
-In WowData, error messages are part of the interface.
+In WowData™, error messages are part of the interface.
 
 Every user-facing error:
 
@@ -129,7 +129,7 @@ Errors are designed to teach correct mental models, not expose internal stack tr
 
 ## **Built on the Best**
 
-WowData does not reinvent proven tools.
+WowData™ does not reinvent proven tools.
 
 Instead, it **piggybacks on best-in-class ecosystems**:
 
@@ -145,7 +145,7 @@ Our contribution is an opinionated, human-centred layer that makes these tools u
 
 ## **Open Source, Unapologetically**
 
-WowData is open source by principle, not convenience.
+WowData™ is open source by principle, not convenience.
 
 We believe that tools shaping how people think about data must be:
 
@@ -161,7 +161,7 @@ We believe that tools shaping how people think about data must be:
 
 ## **A Graphical Future**
 
-WowData is pipeline-first, not code-first or GUI-first.
+WowData™ is pipeline-first, not code-first or GUI-first.
 
 We plan to build a **world-class graphical application** that:
 
@@ -175,11 +175,11 @@ The graphical interface will not be a toy—it will be another way of seeing the
 
 ---
 
-## **What WowData Is** 
+## **What WowData™ Is** 
 
 ## **Not**
 
-WowData is not:
+WowData™ is not:
 
 * a low-code gimmick,
 
@@ -195,7 +195,7 @@ If forced to choose between power and clarity, **we choose clarity**.
 
 ## **Status**
 
-WowData is under active development.
+WowData™ is under active development.
 
 The API is opinionated and evolving, but the core principles are stable.
 
@@ -203,7 +203,7 @@ If these ideas resonate with you, contributions and discussion are welcome.
 
 ---
 
-**WowData is not trying to make data engineering smaller.**
+**WowData™ is not trying to make data engineering smaller.**
 
 **It is trying to make it thinkable.**
 
