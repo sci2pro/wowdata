@@ -3,11 +3,11 @@ from wowdata import Transform, Source, Sink, Pipeline
 from wowdata.tests import DATA_DIR
 
 pipe = (
-    Pipeline(Source(DATA_DIR / "people.csv"))
+    Pipeline(Source(str(DATA_DIR / "people.csv")))
     .then(Transform("filter", params={"where": "age >= 30"}))
     .then(Transform("join", params={"right": "countries.csv", "left_on": ["country"], "right_on": ["country_code"],
                                     "how": "left"}))
-    .then(Sink(DATA_DIR / "out_ir_rtt.csv"))
+    .then(Sink(str(DATA_DIR / "out_ir_rtt.csv")))
 )
 
 y = pipe.to_yaml()

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Optional, Union, Dict, Any, List
-import os
 
 import petl as etl
 
@@ -10,11 +10,9 @@ from wowdata.errors import WowDataUserError
 from wowdata.util import _infer_type_from_uri, FrictionlessSchema, _normalize_inline_schema, Resource, Detector
 
 
-
-
 @dataclass(frozen=True)
 class Source:
-    uri: str
+    uri: str  # todo: enforce uri to string even if provided as pathlib.Path
     type: Optional[str] = None
     schema: Optional[Union[str, FrictionlessSchema]] = None
     options: Dict[str, Any] = field(default_factory=dict)

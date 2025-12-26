@@ -14,7 +14,7 @@ pipe = (
 pipe.run()
 
 pipe = (
-    Pipeline(Source("people.csv"))
+    Pipeline(Source(DATA_DIR / "people.csv"))
     .then(Transform("filter", params={"where": "country == 'KE'"}))
     .then(Sink(DATA_DIR / "out_ke.csv"))
 )
