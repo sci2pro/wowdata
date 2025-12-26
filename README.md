@@ -51,11 +51,11 @@ If you understand these four ideas, you understand WowData™.
 ```python
 from core import Source, Transform, Sink, Pipeline
 
-pipe \= (  
+pipe = (  
     Pipeline(Source("people.csv"))  
-    .then(Transform("cast", params={"types": {"age": "integer"}, "on\_error": "null"}))  
-    .then(Transform("filter", params={"where": "age \>= 30 and country \== 'KE'"}))  
-    .then(Sink("out\_filtered.csv"))  
+    .then(Transform("cast", params={"types": {"age": "integer"}, "on_error": "null"}))  
+    .then(Transform("filter", params={"where": "age >= 30 and country == 'KE'"}))  
+    .then(Sink("out_filtered.csv"))  
 )
 
 pipe.run()
@@ -93,6 +93,39 @@ If a feature makes learning harder—even if it saves time—we reject it.
 
 ---
 
+## **Example: Learning-First Explicitness**
+
+```python
+from wowdata import Source, Transform, Sink, Pipeline
+
+pipe = (
+    Pipeline(Source("people.csv"))
+    .then(
+        Transform(
+            "cast",
+            params={
+                "types": {"age": "integer"},
+                "on_error": "null"   # explicit choice, not hidden behaviour
+            }
+        )
+    )
+    .then(
+        Transform(
+            "filter",
+            params={
+                "where": "age >= 18"
+            }
+        )
+    )
+    .then(Sink("adults.csv"))
+)
+
+pipe.run()
+pipe.to_yaml("pipeline.yaml")
+```
+
+---
+
 ## **Serialization That Humans Can Read**
 
 Every WowData™ pipeline can be serialized into a human-readable form.
@@ -108,6 +141,58 @@ Our goal is that an ordinary user can:
 * explain it to someone else,
 
 * and safely modify it.
+
+### Example: Human-Readable IR Serialization
+
+The same pipeline can be represented as a simple, inspectable Intermediate Representation (IR) save as `pipeline.yaml`:
+
+```yaml
+pipeline:
+  source:
+    type: csv
+    uri: people.csv
+  steps:
+    - kind: transform
+      op: cast
+      params:
+        types:
+          age: integer
+        on_error: null
+    - kind: transform
+      op: filter
+      params:
+        where: "age >= 18"
+    - kind: sink
+      type: csv
+      uri: adults.csv
+```
+
+This IR is deliberately verbose and stable.
+It is designed to be read, reviewed, versioned, and edited by humans — not generated once and forgotten.
+
+Because the IR mirrors the core concepts (Source → Transform → Sink),
+anyone who understands WowData™ can understand what this pipeline does.
+
+---
+
+### Example: Loading a Pipeline from IR (YAML)
+
+A serialized pipeline can be loaded back into WowData™ and executed:
+
+```python
+from wowdata import Pipeline
+
+pipe = Pipeline.from_yaml("pipeline.yaml")
+pipe.run()
+```
+
+This allows pipelines to be:
+- authored or reviewed as YAML,
+- stored in version control,
+- shared between users or systems,
+- and executed without modifying Python code.
+
+The same IR is used by both the programmatic API and future graphical tools.
 
 ---
 
@@ -125,7 +210,21 @@ Every user-facing error:
 
 Errors are designed to teach correct mental models, not expose internal stack traces.
 
----
+### **Example: Errors That Teach**
+
+```python
+from wowdata import Source, Sink, Pipeline
+
+pipe = Pipeline(Source("missing.csv")).then(Sink("out.csv"))
+pipe.run()
+```
+
+produces the following error
+
+```shell
+wowdata.errors.WowDataUserError: [E_SOURCE_NOT_FOUND] Source file not found: 'missing.csv'.
+Hint: Check the path, working directory, and filename. If the file is elsewhere, pass an absolute path.
+```
 
 ## **Built on the Best**
 
@@ -201,9 +300,10 @@ The API is opinionated and evolving, but the core principles are stable.
 
 If these ideas resonate with you, contributions and discussion are welcome.
 
+You can install the bleeding edge by running: `pip install git+https://github.com/sci2pro/wowdata`
+
 ---
 
 **WowData™ is not trying to make data engineering smaller.**
 
 **It is trying to make it thinkable.**
-
