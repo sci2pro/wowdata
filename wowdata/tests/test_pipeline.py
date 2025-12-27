@@ -132,6 +132,19 @@ def test_pipeline_yaml_roundtrip(tmp_path, monkeypatch):
     assert isinstance(pipe2.steps[-1], Sink)
 
 
+def test_to_ir_coerces_pathlike_uris(tmp_path):
+    from pathlib import Path
+
+    src_path = Path(tmp_path / "in.csv")
+    src_path.write_text("a\n1\n", encoding="utf-8")
+    sink_path = Path(tmp_path / "out.csv")
+    pipe = Pipeline(Source(src_path)).then(Sink(str(sink_path)))
+
+    ir = pipe.to_ir()
+    assert isinstance(ir["pipeline"]["start"]["uri"], str)
+    assert isinstance(ir["pipeline"]["steps"][0]["sink"]["uri"], str)
+
+
 def test_pipeline_lock_schema_sets_overrides(monkeypatch):
     class FakeSource:
         uri = "fake.csv"
@@ -363,6 +376,85 @@ def test_save_and_load_yaml(tmp_path, monkeypatch):
     out = tmp_path / "pipe.yaml"
     pipe.save_yaml(out)
     loaded = Pipeline.load_yaml(out)
+    assert isinstance(loaded.start, Source)
+
+
+def test_to_yaml_writes_path(tmp_path, monkeypatch):
+    class DummyYAML:
+        @staticmethod
+        def safe_dump(obj, sort_keys=False):
+            return json.dumps(obj)
+
+    monkeypatch.setattr(mp, "yaml", DummyYAML)
+
+    src = _make_source(tmp_path)
+    pipe = Pipeline(src)
+    out = tmp_path / "pipe.yaml"
+
+    text = pipe.to_yaml(out)
+    assert out.read_text(encoding="utf-8") == text
+
+
+def test_from_yaml_reads_path(tmp_path, monkeypatch):
+    class DummyYAML:
+        @staticmethod
+        def safe_dump(obj, sort_keys=False):
+            return json.dumps(obj)
+
+        @staticmethod
+        def safe_load(text):
+            return json.loads(text)
+
+    monkeypatch.setattr(mp, "yaml", DummyYAML)
+
+    src = _make_source(tmp_path)
+    pipe = Pipeline(src)
+    out = tmp_path / "pipe.yaml"
+    out.write_text(DummyYAML.safe_dump(pipe.to_ir()), encoding="utf-8")
+
+    loaded = Pipeline.from_yaml(out)
+    assert isinstance(loaded.start, Source)
+
+
+def test_from_yaml_accepts_non_path_objects(tmp_path, monkeypatch):
+    class DummyObj:
+        pass
+
+    class DummyYAML:
+        @staticmethod
+        def safe_load(text):
+            assert isinstance(text, DummyObj)
+            return {
+                "wowdata": 0,
+                "pipeline": {"start": {"uri": str(tmp_path / "in.csv"), "type": "csv"}, "steps": []},
+            }
+
+    (tmp_path / "in.csv").write_text("a\n1\n", encoding="utf-8")
+    monkeypatch.setattr(mp, "yaml", DummyYAML)
+
+    pipe = Pipeline.from_yaml(DummyObj())
+    assert isinstance(pipe.start, Source)
+
+
+def test_save_yaml_writes_file(tmp_path, monkeypatch):
+    class DummyYAML:
+        @staticmethod
+        def safe_dump(obj, sort_keys=False):
+            return json.dumps(obj)
+
+        @staticmethod
+        def safe_load(text):
+            return json.loads(text)
+
+    monkeypatch.setattr(mp, "yaml", DummyYAML)
+
+    src = _make_source(tmp_path)
+    pipe = Pipeline(src)
+    path = tmp_path / "out.yaml"
+
+    pipe.save_yaml(path)
+    assert path.exists()
+    loaded = Pipeline.load_yaml(path)
     assert isinstance(loaded.start, Source)
 
 

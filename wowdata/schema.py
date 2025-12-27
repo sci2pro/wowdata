@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
@@ -24,7 +25,8 @@ def _schema_field_names(schema: Optional[FrictionlessSchema]) -> List[str]:
 
 
 def _source_to_ir(src: Source) -> Dict[str, Any]:
-    d: Dict[str, Any] = {"uri": src.uri}
+    uri = os.fspath(src.uri)
+    d: Dict[str, Any] = {"uri": uri}
     if src.type is not None:
         d["type"] = src.type
     if src.schema is not None:
@@ -35,7 +37,8 @@ def _source_to_ir(src: Source) -> Dict[str, Any]:
 
 
 def _sink_to_ir(sink: Sink) -> Dict[str, Any]:
-    d: Dict[str, Any] = {"uri": sink.uri}
+    uri = os.fspath(sink.uri)
+    d: Dict[str, Any] = {"uri": uri}
     if sink.type is not None:
         d["type"] = sink.type
     if sink.options:

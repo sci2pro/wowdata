@@ -147,24 +147,25 @@ Our goal is that an ordinary user can:
 The same pipeline can be represented as a simple, inspectable Intermediate Representation (IR) save as `pipeline.yaml`:
 
 ```yaml
+wowdata: 0
 pipeline:
-  source:
-    type: csv
+  start:
     uri: people.csv
+    type: csv
   steps:
-    - kind: transform
-      op: cast
-      params:
-        types:
-          age: integer
-        on_error: null
-    - kind: transform
-      op: filter
-      params:
-        where: "age >= 18"
-    - kind: sink
-      type: csv
-      uri: adults.csv
+    - transform:
+        op: cast
+        params:
+          types:
+            age: integer
+          on_error: null
+    - transform:
+        op: filter
+        params:
+          where: "age >= 18"
+    - sink:
+        uri: adults.csv
+        type: csv
 ```
 
 This IR is deliberately verbose and stable.

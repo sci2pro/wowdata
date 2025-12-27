@@ -245,8 +245,15 @@ class Pipeline:
 
         return out
 
-    def to_yaml(self, *, lock_schema: bool = False, sample_rows: int = 200, force: bool = False) -> str:
-        """Dump IR to YAML string."""
+    def to_yaml(
+        self,
+        path: Optional[Union[str, Path]] = None,
+        *,
+        lock_schema: bool = False,
+        sample_rows: int = 200,
+        force: bool = False,
+    ) -> str:
+        """Dump IR to YAML string. If `path` is provided, also write the file."""
         if yaml is None:
             raise WowDataUserError(
                 "E_YAML_IMPORT",
@@ -254,17 +261,31 @@ class Pipeline:
                 hint="Install dependency: pip install pyyaml",
             )
         pipe = self.lock_schema(sample_rows=sample_rows, force=force) if lock_schema else self
-        return yaml.safe_dump(pipe.to_ir(), sort_keys=False)
+        text = yaml.safe_dump(pipe.to_ir(), sort_keys=False)
+        if path is not None:
+            p = Path(path)
+            p.write_text(text, encoding="utf-8")
+        return text
 
     @classmethod
-    def from_yaml(cls, text: str, *, base_dir: Optional[Path] = None) -> "Pipeline":
-        """Load pipeline from YAML string."""
+    def from_yaml(cls, text_or_path: Union[str, Path], *, base_dir: Optional[Path] = None) -> "Pipeline":
+        """Load pipeline from YAML string or file path."""
         if yaml is None:
             raise WowDataUserError(
                 "E_YAML_IMPORT",
                 "PyYAML is not available; cannot parse YAML.",
                 hint="Install dependency: pip install pyyaml",
             )
+        # Accept path-like input for convenience
+        if isinstance(text_or_path, (str, Path)):
+            p = Path(text_or_path)
+            if p.exists():
+                base_dir = base_dir or p.parent
+                text = p.read_text(encoding="utf-8")
+            else:
+                text = str(text_or_path)
+        else:
+            text = text_or_path  # type: ignore[assignment]
         try:
             ir = yaml.safe_load(text)
         except Exception as e:
