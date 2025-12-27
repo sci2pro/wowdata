@@ -228,3 +228,34 @@ def test_peek_schema_warns_on_numeric_strings(monkeypatch, tmp_path):
     assert sch.get("fields")
     warns = s.schema_warnings()
     assert any("look numeric" in w for w in warns)
+
+
+def test_schema_warnings_returns_copy(monkeypatch, tmp_path):
+    """schema_warnings returns a copy so callers cannot mutate internal state."""
+    p = tmp_path / "data.csv"
+    _write_csv(p, "a\n1\n")
+    s = Source(str(p))
+    monkeypatch.setattr("wowdata.models.sources.Resource", None)
+    monkeypatch.setattr("wowdata.models.sources.Detector", None)
+
+    s.peek_schema()
+    warns = s.schema_warnings()
+    warns.append("mutated")
+
+    assert "mutated" not in s.schema_warnings()
+
+
+def test_str_includes_uri_kind_and_warning_count(monkeypatch, tmp_path):
+    """__str__ shows uri, type, and warning count when warnings exist."""
+    p = tmp_path / "data.csv"
+    _write_csv(p, "a\n1\n")
+    s = Source(str(p))
+    monkeypatch.setattr("wowdata.models.sources.Resource", None)
+    monkeypatch.setattr("wowdata.models.sources.Detector", None)
+
+    s.peek_schema()
+    msg = str(s)
+
+    assert f'Source("{p}")' in msg
+    assert "kind=csv" in msg
+    assert "warnings=" in msg
