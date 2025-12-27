@@ -127,3 +127,29 @@ def test_table_wraps_other_errors(monkeypatch, tmp_path):
         s.table()
     assert getattr(ex.value, "code", None) == "E_SOURCE_READ"
     assert "PermissionError" in str(ex.value)
+
+
+def test_head_returns_preview_rows(tmp_path):
+    p = tmp_path / "data.csv"
+    _write_csv(p, "a\n1\n2\n3\n")
+    s = Source(str(p))
+
+    tbl = s.head()  # default preview_rows=5
+    rows = list(tbl)
+    assert len(rows) == 4  # header + 3 data rows; bounded by file size here
+    assert rows[0] == ("a",)
+
+
+def test_preview_str_truncates(tmp_path, monkeypatch):
+    p = tmp_path / "data.csv"
+    # Build a long CSV to exceed preview_max_chars
+    rows = ["col\n"] + [f"{i}\n" for i in range(1000)]
+    _write_csv(p, "".join(rows))
+    s = Source(str(p))
+
+    # Force a small preview_max_chars to trigger truncation deterministically
+    object.__setattr__(s, "preview_max_chars", 40)
+
+    preview = s._preview_str()
+    assert "truncated" in preview
+    assert len(preview) <= 60  # small slack for table borders + suffix
