@@ -82,3 +82,9 @@ python_version = "3.10"
 strict = false
 warn_return_any = true
 warn_unused_configs = true
+
+[tools.coverage.run]
+omit = [
+  "wowdata/tests/examples/*.py",
+  "wowdata/tests/tests*.py",
+]

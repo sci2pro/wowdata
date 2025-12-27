@@ -50,3 +50,49 @@ def test_source_table_wraps_file_not_found_defensively(tmp_path, monkeypatch):
     with pytest.raises(WowDataUserError) as ex:
         _ = s.table()  # should wrap open failure
     assert getattr(ex.value, "code", None) == "E_SOURCE_NOT_FOUND"
+
+
+def test_source_accepts_pathlib_paths_and_normalizes(tmp_path):
+    p = tmp_path / "data.csv"
+    _write_csv(p, "a\n1\n")
+
+    s = Source(p)  # pass a pathlib.Path
+
+    assert isinstance(s.uri, str)
+    assert s.uri == str(p)
+    assert s.type == "csv"
+
+
+def test_source_rejects_non_string_uri_type():
+    with pytest.raises(WowDataUserError) as ex:
+        Source(123)  # type: ignore[arg-type]
+    assert getattr(ex.value, "code", None) == "E_SOURCE_URI_TYPE"
+
+
+def test_source_infer_type_failure_raises(tmp_path):
+    p = tmp_path / "data"  # no extension => cannot infer type
+    p.write_text("a\n1\n", encoding="utf-8")
+
+    with pytest.raises(WowDataUserError) as ex:
+        Source(str(p))
+    assert getattr(ex.value, "code", None) == "E_SOURCE_TYPE_INFER"
+
+
+def test_source_rejects_unsupported_explicit_type(tmp_path):
+    p = tmp_path / "data.csv"
+    _write_csv(p, "a\n1\n")
+
+    with pytest.raises(WowDataUserError) as ex:
+        Source(str(p), type="json")
+    assert getattr(ex.value, "code", None) == "E_SOURCE_TYPE_UNSUPPORTED"
+
+
+def test_source_normalizes_inline_schema(tmp_path):
+    p = tmp_path / "data.csv"
+    _write_csv(p, "a\n1\n")
+    inline_schema = {"fields": [{"name": "a", "type": "integer"}]}
+
+    s = Source(str(p), schema=inline_schema)
+
+    # Ensure inline schema normalization ran without altering the original mapping reference
+    assert s.schema is inline_schema

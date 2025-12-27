@@ -40,9 +40,6 @@ class Source:
         inferred = self.type or _infer_type_from_uri(self.uri)
         object.__setattr__(self, "type", inferred)
 
-        if isinstance(self.uri, PathLike): # convert PathLikes to str
-            object.__setattr__(self, "uri", str(self.uri))
-
         if self.type is None:
             raise WowDataUserError(
                 "E_SOURCE_TYPE_INFER",
