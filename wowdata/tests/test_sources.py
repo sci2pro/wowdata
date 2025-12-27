@@ -1,6 +1,6 @@
 import pytest
 
-from wowdata import Source, WowDataUserError, Source
+from wowdata import WowDataUserError, Source
 
 
 def _write_csv(path, text: str) -> None:
@@ -43,9 +43,9 @@ def test_source_table_wraps_file_not_found_defensively(tmp_path, monkeypatch):
     missing = tmp_path / "missing.csv"
     s = Source.__new__(Source)  # bypass __init__/__post_init__
     # Minimal attributes required by Source.table() for csv
-    s.uri = str(missing)
-    s.type = "csv"
-    s.options = {}
+    object.__setattr__(s, "uri", missing)
+    object.__setattr__(s, "type", "csv")
+    object.__setattr__(s, "options", {})
 
     with pytest.raises(WowDataUserError) as ex:
         _ = s.table()  # should wrap open failure

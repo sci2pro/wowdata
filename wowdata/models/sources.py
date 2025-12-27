@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from os import PathLike
 from dataclasses import dataclass, field
 from typing import Optional, Union, Dict, Any, List
 
@@ -12,7 +13,7 @@ from wowdata.util import _infer_type_from_uri, FrictionlessSchema, _normalize_in
 
 @dataclass(frozen=True)
 class Source:
-    uri: str  # todo: enforce uri to string even if provided as pathlib.Path
+    uri: Union[str, PathLike[str]]  # accept path-like, normalize in __post_init__
     type: Optional[str] = None
     schema: Optional[Union[str, FrictionlessSchema]] = None
     options: Dict[str, Any] = field(default_factory=dict)
@@ -25,8 +26,22 @@ class Source:
     _schema_warnings: List[str] = field(default_factory=list, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        raw_uri = self.uri
+        if isinstance(raw_uri, PathLike):
+            object.__setattr__(self, "uri", os.fspath(raw_uri))
+
+        if not isinstance(self.uri, str):
+            raise WowDataUserError(
+                "E_SOURCE_URI_TYPE",
+                f"Source uri must be a string or path-like; got {type(raw_uri).__name__}.",
+                hint="Pass pathlib.Path or a string path.",
+            )
+
         inferred = self.type or _infer_type_from_uri(self.uri)
         object.__setattr__(self, "type", inferred)
+
+        if isinstance(self.uri, PathLike): # convert PathLikes to str
+            object.__setattr__(self, "uri", str(self.uri))
 
         if self.type is None:
             raise WowDataUserError(
@@ -63,6 +78,14 @@ class Source:
         Return a PETL table. PETL is lazy for many sources; reading occurs on iteration.
         """
         if self.type == "csv":
+            # Defensive: file might disappear after construction or Source may be
+            # created without running __post_init__ (e.g. in tests).
+            if not os.path.exists(self.uri):
+                raise WowDataUserError(
+                    "E_SOURCE_NOT_FOUND",
+                    f"Source file not found: '{self.uri}'.",
+                    hint="Check the path, working directory, and filename. If the file is elsewhere, pass an absolute path.",
+                )
             # PETL fromcsv supports kwargs like delimiter, encoding, etc.
             try:
                 return etl.fromcsv(self.uri, **self.options)
