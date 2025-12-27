@@ -96,3 +96,34 @@ def test_source_normalizes_inline_schema(tmp_path):
 
     # Ensure inline schema normalization ran without altering the original mapping reference
     assert s.schema is inline_schema
+
+
+def test_table_wraps_filenotfound_from_petl(monkeypatch, tmp_path):
+    p = tmp_path / "data.csv"
+    _write_csv(p, "a\n1\n")
+    s = Source(str(p))
+
+    def raise_filenotfound(*args, **kwargs):
+        raise FileNotFoundError("gone")
+
+    monkeypatch.setattr("wowdata.models.sources.etl.fromcsv", raise_filenotfound)
+
+    with pytest.raises(WowDataUserError) as ex:
+        s.table()
+    assert getattr(ex.value, "code", None) == "E_SOURCE_NOT_FOUND"
+
+
+def test_table_wraps_other_errors(monkeypatch, tmp_path):
+    p = tmp_path / "data.csv"
+    _write_csv(p, "a\n1\n")
+    s = Source(str(p))
+
+    def raise_other(*args, **kwargs):
+        raise PermissionError("nope")
+
+    monkeypatch.setattr("wowdata.models.sources.etl.fromcsv", raise_other)
+
+    with pytest.raises(WowDataUserError) as ex:
+        s.table()
+    assert getattr(ex.value, "code", None) == "E_SOURCE_READ"
+    assert "PermissionError" in str(ex.value)
