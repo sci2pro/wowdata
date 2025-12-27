@@ -31,6 +31,7 @@ def _make_sink(tmp_path, name="out.csv"):
 
 
 def test_pipeline_then_validates_step_type(tmp_path):
+    """then() rejects non-Transform/Sink steps."""
     src = _make_source(tmp_path)
     pipe = Pipeline(src)
 
@@ -40,6 +41,7 @@ def test_pipeline_then_validates_step_type(tmp_path):
 
 
 def test_pipeline_then_rejects_transform_after_sink(tmp_path):
+    """then() prevents adding a Transform after a Sink."""
     src = _make_source(tmp_path)
     sink = _make_sink(tmp_path)
     pipe = Pipeline(src).then(sink)
@@ -50,6 +52,7 @@ def test_pipeline_then_rejects_transform_after_sink(tmp_path):
 
 
 def test_pipeline_preflight_rejects_unknown_step_type(tmp_path):
+    """preflight() rejects unknown step types."""
     src = _make_source(tmp_path)
     pipe = Pipeline(src, steps=[object()])
 
@@ -59,6 +62,7 @@ def test_pipeline_preflight_rejects_unknown_step_type(tmp_path):
 
 
 def test_pipeline_run_records_checkpoints_and_schema(tmp_path, monkeypatch):
+    """run() records transform/sink checkpoints and schema evolution."""
     src = _make_source(tmp_path)
     sink = _make_sink(tmp_path)
     sink_calls = []
@@ -79,6 +83,7 @@ def test_pipeline_run_records_checkpoints_and_schema(tmp_path, monkeypatch):
 
 
 def test_pipeline_schema_applies_transform_output_schema(monkeypatch):
+    """schema() threads output_schema through transforms."""
     class FakeSource:
         uri = "fake.csv"
 
@@ -93,6 +98,7 @@ def test_pipeline_schema_applies_transform_output_schema(monkeypatch):
 
 
 def test_pipeline_to_ir_and_from_ir(tmp_path):
+    """to_ir/from_ir round-trip builds pipeline objects."""
     src = _make_source(tmp_path)
     sink = _make_sink(tmp_path)
     pipe = Pipeline(src).then(Transform("test_addcol", params={"value": 2})).then(sink)
@@ -108,6 +114,7 @@ def test_pipeline_to_ir_and_from_ir(tmp_path):
 
 
 def test_pipeline_yaml_roundtrip(tmp_path, monkeypatch):
+    """YAML round-trip works with a stubbed yaml backend."""
     if mp.yaml is None:
         monkeypatch.setattr(
             mp,
@@ -133,6 +140,7 @@ def test_pipeline_yaml_roundtrip(tmp_path, monkeypatch):
 
 
 def test_to_ir_coerces_pathlike_uris(tmp_path):
+    """Path-like URIs are coerced to strings in IR."""
     from pathlib import Path
 
     src_path = Path(tmp_path / "in.csv")
@@ -146,6 +154,7 @@ def test_to_ir_coerces_pathlike_uris(tmp_path):
 
 
 def test_pipeline_lock_schema_sets_overrides(monkeypatch):
+    """lock_schema freezes schema after each transform."""
     class FakeSource:
         uri = "fake.csv"
 
@@ -161,6 +170,7 @@ def test_pipeline_lock_schema_sets_overrides(monkeypatch):
 
 
 def test_pipeline_str_includes_steps(tmp_path):
+    """__str__ shows pipeline start and steps."""
     src = _make_source(tmp_path)
     sink = _make_sink(tmp_path)
     pipe = Pipeline(src).then(Transform("test_addcol")).then(sink)
@@ -172,6 +182,7 @@ def test_pipeline_str_includes_steps(tmp_path):
 
 
 def test_pipeline_context_defaults():
+    """PipelineContext defaults to empty structures."""
     ctx = mp.PipelineContext()
     assert ctx.checkpoints == []
     assert ctx.schema is None
@@ -179,6 +190,7 @@ def test_pipeline_context_defaults():
 
 
 def test_preflight_rejects_transform_after_sink(tmp_path):
+    """preflight() enforces order: no transform after sink."""
     src = _make_source(tmp_path)
     sink = _make_sink(tmp_path)
     pipe = Pipeline(src, steps=[sink, Transform("test_addcol")])
@@ -189,6 +201,7 @@ def test_preflight_rejects_transform_after_sink(tmp_path):
 
 
 def test_run_rejects_transform_after_sink(tmp_path, monkeypatch):
+    """run() enforces order even if preflight is skipped."""
     src = _make_source(tmp_path)
     sink = Sink.__new__(Sink)
     object.__setattr__(sink, "uri", str(tmp_path / "out.csv"))
@@ -206,6 +219,7 @@ def test_run_rejects_transform_after_sink(tmp_path, monkeypatch):
 
 
 def test_run_checkpoint_on_header_failure(tmp_path, monkeypatch):
+    """run() records empty headers when header read fails."""
     src = _make_source(tmp_path)
     pipe = Pipeline(src).then(Transform("test_addcol", params={"value": 1}))
 
@@ -220,6 +234,7 @@ def test_run_checkpoint_on_header_failure(tmp_path, monkeypatch):
 
 
 def test_run_checkpoint_on_preview_failure(tmp_path, monkeypatch):
+    """run() records empty previews when preview generation fails."""
     src = _make_source(tmp_path)
     pipe = Pipeline(src).then(Transform("test_addcol", params={"value": 1}))
 
@@ -231,6 +246,7 @@ def test_run_checkpoint_on_preview_failure(tmp_path, monkeypatch):
 
 
 def test_run_unknown_step_type(tmp_path, monkeypatch):
+    """run() raises for unknown step types."""
     class FakeSource:
         uri = "fake.csv"
 
@@ -249,6 +265,7 @@ def test_run_unknown_step_type(tmp_path, monkeypatch):
 
 
 def test_pipeline_schema_returns_none_on_unknown_step():
+    """schema() returns None when encountering unknown steps."""
     class FakeSource:
         def peek_schema(self, *_, **__):
             return {}
@@ -258,6 +275,7 @@ def test_pipeline_schema_returns_none_on_unknown_step():
 
 
 def test_pipeline_schema_with_sink_passes_through(tmp_path):
+    """schema() ignores sinks and returns source schema."""
     src = _make_source(tmp_path)
     sink = _make_sink(tmp_path)
     pipe = Pipeline(src).then(sink)
@@ -267,6 +285,7 @@ def test_pipeline_schema_with_sink_passes_through(tmp_path):
 
 
 def test_to_ir_rejects_unknown_step(tmp_path):
+    """to_ir raises on unknown step types."""
     src = _make_source(tmp_path)
     pipe = Pipeline(src, steps=[object()])
 
@@ -276,6 +295,7 @@ def test_to_ir_rejects_unknown_step(tmp_path):
 
 
 def test_from_ir_validations(tmp_path):
+    """from_ir validates steps list shape and keys."""
     src_file = tmp_path / "x.csv"
     src_file.write_text("a\n1\n", encoding="utf-8")
     base_ir = {
@@ -306,6 +326,7 @@ def test_from_ir_validations(tmp_path):
 
 
 def test_from_ir_validations_in_pipeline_module(monkeypatch):
+    """from_ir catches IR structural errors after normalization."""
     class DummySource:
         uri = "dummy"
 
@@ -328,6 +349,7 @@ def test_from_ir_validations_in_pipeline_module(monkeypatch):
 
 
 def test_to_yaml_errors_when_yaml_missing(monkeypatch, tmp_path):
+    """to_yaml raises E_YAML_IMPORT when PyYAML is missing."""
     monkeypatch.setattr(mp, "yaml", None)
     src = _make_source(tmp_path)
     pipe = Pipeline(src)
@@ -338,6 +360,7 @@ def test_to_yaml_errors_when_yaml_missing(monkeypatch, tmp_path):
 
 
 def test_from_yaml_parse_errors(monkeypatch):
+    """from_yaml wraps YAML parse errors."""
     class DummyYAML:
         @staticmethod
         def safe_load(text):
@@ -351,6 +374,7 @@ def test_from_yaml_parse_errors(monkeypatch):
 
 
 def test_from_yaml_errors_when_yaml_missing(monkeypatch):
+    """from_yaml raises E_YAML_IMPORT when PyYAML is missing."""
     monkeypatch.setattr(mp, "yaml", None)
     with pytest.raises(WowDataUserError) as ex:
         Pipeline.from_yaml("text")
@@ -358,6 +382,7 @@ def test_from_yaml_errors_when_yaml_missing(monkeypatch):
 
 
 def test_save_and_load_yaml(tmp_path, monkeypatch):
+    """save_yaml/load_yaml round-trip via stubbed yaml."""
     class DummyYAML:
         @staticmethod
         def safe_dump(obj, sort_keys=False):
@@ -380,6 +405,7 @@ def test_save_and_load_yaml(tmp_path, monkeypatch):
 
 
 def test_to_yaml_writes_path(tmp_path, monkeypatch):
+    """to_yaml writes to a provided path when yaml is available."""
     class DummyYAML:
         @staticmethod
         def safe_dump(obj, sort_keys=False):
@@ -396,6 +422,7 @@ def test_to_yaml_writes_path(tmp_path, monkeypatch):
 
 
 def test_from_yaml_reads_path(tmp_path, monkeypatch):
+    """from_yaml reads from a path when yaml is available."""
     class DummyYAML:
         @staticmethod
         def safe_dump(obj, sort_keys=False):
@@ -417,6 +444,7 @@ def test_from_yaml_reads_path(tmp_path, monkeypatch):
 
 
 def test_from_yaml_accepts_non_path_objects(tmp_path, monkeypatch):
+    """from_yaml accepts arbitrary objects and passes them to yaml.safe_load."""
     class DummyObj:
         pass
 
@@ -437,6 +465,7 @@ def test_from_yaml_accepts_non_path_objects(tmp_path, monkeypatch):
 
 
 def test_save_yaml_writes_file(tmp_path, monkeypatch):
+    """save_yaml writes file and load_yaml reads it."""
     class DummyYAML:
         @staticmethod
         def safe_dump(obj, sort_keys=False):
