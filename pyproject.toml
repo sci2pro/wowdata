@@ -85,6 +85,7 @@ warn_unused_configs = true
 
 [tools.coverage.run]
 omit = [
-  "wowdata/tests/examples/*.py",
-  "wowdata/tests/tests*.py",
+  "wowdata/wowdata/tests/examples/",
+  "wowdata/wowdata/tests/",
+  "wowdata/experiments/"
 ]

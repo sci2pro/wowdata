@@ -163,3 +163,213 @@ def test_pipeline_context_defaults():
     assert ctx.checkpoints == []
     assert ctx.schema is None
     assert ctx.validations == []
+
+
+def test_preflight_rejects_transform_after_sink(tmp_path):
+    src = _make_source(tmp_path)
+    sink = _make_sink(tmp_path)
+    pipe = Pipeline(src, steps=[sink, Transform("test_addcol")])
+
+    with pytest.raises(WowDataUserError) as ex:
+        pipe.preflight()
+    assert getattr(ex.value, "code", None) == "E_PIPELINE_ORDER"
+
+
+def test_run_rejects_transform_after_sink(tmp_path, monkeypatch):
+    src = _make_source(tmp_path)
+    sink = Sink.__new__(Sink)
+    object.__setattr__(sink, "uri", str(tmp_path / "out.csv"))
+    object.__setattr__(sink, "type", "csv")
+    object.__setattr__(sink, "options", {})
+    object.__setattr__(sink, "write", lambda table: None)
+
+    # bypass preflight to hit runtime guard
+    monkeypatch.setattr(Pipeline, "preflight", lambda self: None)
+
+    pipe = Pipeline(src, steps=[sink, Transform("test_addcol")])
+    with pytest.raises(WowDataUserError) as ex:
+        pipe.run()
+    assert getattr(ex.value, "code", None) == "E_PIPELINE_ORDER"
+
+
+def test_run_checkpoint_on_header_failure(tmp_path, monkeypatch):
+    src = _make_source(tmp_path)
+    pipe = Pipeline(src).then(Transform("test_addcol", params={"value": 1}))
+
+    monkeypatch.setattr("wowdata.models.pipeline.etl.header", lambda table: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr("wowdata.models.pipeline.etl.head", lambda table, n: [("a",), ("1",)])
+    monkeypatch.setattr("wowdata.models.pipeline.etl.data", lambda t: t)
+
+    ctx = pipe.run()
+    # header should be [] due to failure; preview present
+    assert ctx.checkpoints[0][1]["header"] == []
+    assert ctx.checkpoints[0][1]["preview"]
+
+
+def test_run_checkpoint_on_preview_failure(tmp_path, monkeypatch):
+    src = _make_source(tmp_path)
+    pipe = Pipeline(src).then(Transform("test_addcol", params={"value": 1}))
+
+    monkeypatch.setattr("wowdata.models.pipeline.etl.header", lambda table: ["a", "b"])
+    monkeypatch.setattr("wowdata.models.pipeline.etl.head", lambda table, n: (_ for _ in ()).throw(RuntimeError()))
+
+    ctx = pipe.run()
+    assert ctx.checkpoints[0][1]["preview"] == []
+
+
+def test_run_unknown_step_type(tmp_path, monkeypatch):
+    class FakeSource:
+        uri = "fake.csv"
+
+        def peek_schema(self):
+            return {}
+
+        def table(self):
+            return []
+
+    pipe = Pipeline(FakeSource(), steps=[object()])
+    monkeypatch.setattr(Pipeline, "preflight", lambda self: None)
+
+    with pytest.raises(WowDataUserError) as ex:
+        pipe.run()
+    assert getattr(ex.value, "code", None) == "E_PIPELINE_STEP_TYPE"
+
+
+def test_pipeline_schema_returns_none_on_unknown_step():
+    class FakeSource:
+        def peek_schema(self, *_, **__):
+            return {}
+
+    pipe = Pipeline(FakeSource(), steps=[object()])
+    assert pipe.schema() is None
+
+
+def test_pipeline_schema_with_sink_passes_through(tmp_path):
+    src = _make_source(tmp_path)
+    sink = _make_sink(tmp_path)
+    pipe = Pipeline(src).then(sink)
+
+    sch = pipe.schema()
+    assert sch == src.peek_schema()
+
+
+def test_to_ir_rejects_unknown_step(tmp_path):
+    src = _make_source(tmp_path)
+    pipe = Pipeline(src, steps=[object()])
+
+    with pytest.raises(WowDataUserError) as ex:
+        pipe.to_ir()
+    assert getattr(ex.value, "code", None) == "E_IR_STEP"
+
+
+def test_from_ir_validations(tmp_path):
+    src_file = tmp_path / "x.csv"
+    src_file.write_text("a\n1\n", encoding="utf-8")
+    base_ir = {
+        "wowdata": 0,
+        "pipeline": {"start": {"uri": str(src_file), "type": "csv"}, "steps": []},
+    }
+
+    bad_steps_type = {"wowdata": 0, "pipeline": {"start": {"uri": str(src_file)}, "steps": "oops"}}
+    with pytest.raises(WowDataUserError) as ex:
+        Pipeline.from_ir(bad_steps_type)
+    assert getattr(ex.value, "code", None) == "E_IR_STEPS"
+
+    bad_step_shape = {
+        "wowdata": 0,
+        "pipeline": {"start": {"uri": str(src_file), "type": "csv"}, "steps": [{}]},
+    }
+    with pytest.raises(WowDataUserError) as ex:
+        Pipeline.from_ir(bad_step_shape)
+    assert getattr(ex.value, "code", None) == "E_IR_STEP"
+
+    bad_step_key = {
+        "wowdata": 0,
+        "pipeline": {"start": {"uri": str(src_file), "type": "csv"}, "steps": [{"unknown": {}}]},
+    }
+    with pytest.raises(WowDataUserError) as ex:
+        Pipeline.from_ir(bad_step_key)
+    assert getattr(ex.value, "code", None) == "E_IR_STEP"
+
+
+def test_from_ir_validations_in_pipeline_module(monkeypatch):
+    class DummySource:
+        uri = "dummy"
+
+    monkeypatch.setattr(mp, "_normalize_ir", lambda ir, base_dir=None: ir)
+    monkeypatch.setattr(mp, "_source_from_ir", lambda d: DummySource())
+    monkeypatch.setattr(mp, "_transform_from_ir", lambda d: "T")
+    monkeypatch.setattr(mp, "_sink_from_ir", lambda d: "S")
+
+    with pytest.raises(WowDataUserError) as ex:
+        Pipeline.from_ir({"pipeline": {"start": {}, "steps": "oops"}, "wowdata": 0})
+    assert getattr(ex.value, "code", None) == "E_IR_STEPS"
+
+    with pytest.raises(WowDataUserError) as ex:
+        Pipeline.from_ir({"pipeline": {"start": {}, "steps": [{}]}, "wowdata": 0})
+    assert getattr(ex.value, "code", None) == "E_IR_STEP"
+
+    with pytest.raises(WowDataUserError) as ex:
+        Pipeline.from_ir({"pipeline": {"start": {}, "steps": [{"unknown": {}}]}, "wowdata": 0})
+    assert getattr(ex.value, "code", None) == "E_IR_STEP"
+
+
+def test_to_yaml_errors_when_yaml_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(mp, "yaml", None)
+    src = _make_source(tmp_path)
+    pipe = Pipeline(src)
+
+    with pytest.raises(WowDataUserError) as ex:
+        pipe.to_yaml()
+    assert getattr(ex.value, "code", None) == "E_YAML_IMPORT"
+
+
+def test_from_yaml_parse_errors(monkeypatch):
+    class DummyYAML:
+        @staticmethod
+        def safe_load(text):
+            raise ValueError("bad")
+
+    monkeypatch.setattr(mp, "yaml", DummyYAML)
+
+    with pytest.raises(WowDataUserError) as ex:
+        Pipeline.from_yaml("not yaml")
+    assert getattr(ex.value, "code", None) == "E_YAML_PARSE"
+
+
+def test_from_yaml_errors_when_yaml_missing(monkeypatch):
+    monkeypatch.setattr(mp, "yaml", None)
+    with pytest.raises(WowDataUserError) as ex:
+        Pipeline.from_yaml("text")
+    assert getattr(ex.value, "code", None) == "E_YAML_IMPORT"
+
+
+def test_save_and_load_yaml(tmp_path, monkeypatch):
+    class DummyYAML:
+        @staticmethod
+        def safe_dump(obj, sort_keys=False):
+            return json.dumps(obj)
+
+        @staticmethod
+        def safe_load(text):
+            return json.loads(text)
+
+    monkeypatch.setattr(mp, "yaml", DummyYAML)
+
+    src = _make_source(tmp_path)
+    sink = _make_sink(tmp_path)
+    pipe = Pipeline(src).then(sink)
+
+    out = tmp_path / "pipe.yaml"
+    pipe.save_yaml(out)
+    loaded = Pipeline.load_yaml(out)
+    assert isinstance(loaded.start, Source)
+
+
+def test_lock_schema_preserves_sinks(tmp_path):
+    src = _make_source(tmp_path)
+    sink = _make_sink(tmp_path)
+    pipe = Pipeline(src).then(Transform("test_addcol")).then(sink)
+
+    locked = pipe.lock_schema()
+    assert isinstance(locked.steps[-1], Sink)
