@@ -1,6 +1,7 @@
 import pytest
 
 from wowdata import WowDataUserError, Source
+from wowdata.models.sources import _source_from_descriptor as source_from_descriptor
 
 
 def _write_csv(path, text: str) -> None:
@@ -259,3 +260,240 @@ def test_str_includes_uri_kind_and_warning_count(monkeypatch, tmp_path):
     assert f'Source("{p}")' in msg
     assert "kind=csv" in msg
     assert "warnings=" in msg
+
+
+def test_table_rejects_unsupported_type():
+    """table() raises for non-csv Source types."""
+    s = Source.__new__(Source)
+    object.__setattr__(s, "uri", "data.json")
+    object.__setattr__(s, "type", "json")
+    object.__setattr__(s, "options", {})
+
+    with pytest.raises(WowDataUserError) as ex:
+        s.table()
+    assert getattr(ex.value, "code", None) == "E_SOURCE_TABLE_UNSUPPORTED"
+
+
+def test_peek_schema_warns_when_no_fields(monkeypatch, tmp_path):
+    """peek_schema emits warning when schema has no fields."""
+    p = tmp_path / "data.csv"
+    _write_csv(p, "a\n1\n")
+    s = Source(str(p))
+
+    class StubDetector:
+        def __init__(self, sample_size: int):
+            self.sample_size = sample_size
+
+    class StubResource:
+        def __init__(self, path, detector):
+            self.path = path
+            self.detector = detector
+
+        def infer(self):
+            return None
+
+        def to_descriptor(self):
+            return {"schema": {"fields": []}}
+
+    monkeypatch.setattr("wowdata.models.sources.Detector", StubDetector)
+    monkeypatch.setattr("wowdata.models.sources.Resource", StubResource)
+
+    sch = s.peek_schema()
+    assert sch == {"fields": []}
+    assert any("No fields inferred" in w for w in s.schema_warnings())
+
+
+def test_peek_schema_sampling_numeric_branches(monkeypatch, tmp_path):
+    """peek_schema sampling covers numeric heuristic branches."""
+    p = tmp_path / "data.csv"
+    _write_csv(p, "age\n1\n2\n3\n4\n5\n")
+    s = Source(str(p))
+
+    class StubDetector:
+        def __init__(self, sample_size: int):
+            self.sample_size = sample_size
+
+    class StubResource:
+        def __init__(self, path, detector):
+            self.path = path
+            self.detector = detector
+
+        def infer(self):
+            return None
+
+        def to_descriptor(self):
+            return {"schema": {"fields": [{"name": "age", "type": "string"}]}}
+
+    # Sample includes None, empty string, non-numeric, numeric strings, ints, floats
+    sample_rows = [
+        ("age",),
+        (None,),
+        ("",),
+        ("abc",),
+        ("1",),
+        ("2",),
+        ("3",),
+        (4,),
+        (5.0,),
+        ("6 ",),
+    ]
+
+    monkeypatch.setattr("wowdata.models.sources.Detector", StubDetector)
+    monkeypatch.setattr("wowdata.models.sources.Resource", StubResource)
+    monkeypatch.setattr("wowdata.models.sources.etl.head", lambda table, n: sample_rows)
+    monkeypatch.setattr("wowdata.models.sources.etl.data", lambda t: t)
+
+    sch = s.peek_schema(sample_rows=10)
+    assert sch.get("fields")
+    warns = s.schema_warnings()
+    assert any("look numeric" in w for w in warns)
+
+
+def test_peek_schema_sampling_exception_adds_warning(monkeypatch, tmp_path):
+    """peek_schema adds a warning when inference raises."""
+    p = tmp_path / "data.csv"
+    _write_csv(p, "a\n1\n")
+    s = Source(str(p))
+
+    class StubDetector:
+        def __init__(self, sample_size: int):
+            self.sample_size = sample_size
+
+    class StubResource:
+        def __init__(self, path, detector):
+            pass
+
+        def infer(self):
+            raise ValueError("boom")
+
+        def to_descriptor(self):
+            return {}
+
+    monkeypatch.setattr("wowdata.models.sources.Detector", StubDetector)
+    monkeypatch.setattr("wowdata.models.sources.Resource", StubResource)
+
+    sch = s.peek_schema()
+    assert sch == {"fields": []}
+    assert any("Schema inference failed" in w for w in s.schema_warnings())
+
+
+def test_peek_schema_calls_looks_number_edge_branches(monkeypatch, tmp_path):
+    """peek_schema internal _looks_number handles None/blank/non-str values."""
+    import types
+    import wowdata.models.sources as ms
+
+    code_obj = next(
+        c
+        for c in ms.Source.peek_schema.__code__.co_consts
+        if isinstance(c, types.CodeType) and c.co_name == "_looks_number"
+    )
+    looks = types.FunctionType(code_obj, ms.Source.peek_schema.__globals__)
+
+    assert looks(None) is False  # None branch
+    assert looks("") is False  # blank string branch
+    class Dummy:
+        pass
+    assert looks(Dummy()) is False  # other type branch
+
+
+def test_peek_schema_sampling_exception_swallowed(monkeypatch, tmp_path):
+    """Sampling errors inside peek_schema are swallowed (best-effort heuristics)."""
+    p = tmp_path / "data.csv"
+    _write_csv(p, "a\n1\n")
+    s = Source(str(p))
+
+    class StubDetector:
+        def __init__(self, sample_size: int):
+            self.sample_size = sample_size
+
+    class StubResource:
+        def __init__(self, path, detector):
+            self.path = path
+            self.detector = detector
+
+        def infer(self):
+            return None
+
+        def to_descriptor(self):
+            return {"schema": {"fields": [{"name": "a", "type": "string"}]}}
+
+    monkeypatch.setattr("wowdata.models.sources.Detector", StubDetector)
+    monkeypatch.setattr("wowdata.models.sources.Resource", StubResource)
+    monkeypatch.setattr("wowdata.models.sources.etl.head", lambda table, n: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    # Should not raise despite sampling error
+    sch = s.peek_schema(sample_rows=5)
+    assert sch.get("fields")
+
+
+def test_str_branch_schema_ref_and_inferred_fields(monkeypatch):
+    """__str__ formats schema_ref and inferred fields (with ellipsis)."""
+    monkeypatch.setattr(Source, "_preview_str", lambda self: "preview")
+    s = Source.__new__(Source)
+    object.__setattr__(s, "uri", "data.csv")
+    object.__setattr__(s, "type", "csv")
+    object.__setattr__(s, "schema", "ref")
+    object.__setattr__(
+        s,
+        "_inferred_schema",
+        {"fields": [{"name": f"c{i}", "type": "string"} for i in range(10)]},
+    )
+    object.__setattr__(s, "_schema_warnings", ["w1"])
+
+    msg = str(s)
+    assert 'schema_ref=ref' in msg
+    assert "c0:string" in msg
+    assert "…}" in msg
+    assert "warnings=1" in msg
+
+
+def test_str_branch_inline_schema(monkeypatch):
+    """__str__ notes inline schemas."""
+    monkeypatch.setattr(Source, "_preview_str", lambda self: "preview")
+    s = Source.__new__(Source)
+    object.__setattr__(s, "uri", "data.csv")
+    object.__setattr__(s, "type", "csv")
+    object.__setattr__(s, "schema", {"fields": []})
+    object.__setattr__(s, "_inferred_schema", None)
+    object.__setattr__(s, "_schema_warnings", [])
+
+    msg = str(s)
+    assert "schema=(inline)" in msg
+
+
+def test_source_from_descriptor_accepts_string(tmp_path):
+    """_source_from_descriptor handles string URIs."""
+    p = tmp_path / "data.csv"
+    _write_csv(p, "a\n1\n")
+
+    s = source_from_descriptor(str(p))
+    assert isinstance(s, Source)
+    assert s.uri == str(p)
+
+
+def test_source_from_descriptor_accepts_mapping(tmp_path):
+    """_source_from_descriptor builds Source from descriptor mapping."""
+    p = tmp_path / "data.csv"
+    _write_csv(p, "a\n1\n")
+
+    desc = {"uri": str(p), "type": "csv", "options": {"delimiter": ","}}
+    s = source_from_descriptor(desc)
+
+    assert isinstance(s, Source)
+    assert s.uri == str(p)
+    assert s.type == "csv"
+    assert s.options == {"delimiter": ","}
+
+
+def test_source_from_descriptor_rejects_bad_mapping():
+    """_source_from_descriptor raises when mapping lacks uri."""
+    with pytest.raises(WowDataUserError) as ex:
+        source_from_descriptor({"type": "csv"})
+    assert getattr(ex.value, "code", None) == "E_JOIN_RIGHT"
+
+
+def test_source_from_descriptor_rejects_other_types():
+    """_source_from_descriptor rejects unsupported descriptor types."""
+    with pytest.raises(WowDataUserError) as ex:
+        source_from_descriptor(123)  # type: ignore[arg-type]
+    assert getattr(ex.value, "code", None) == "E_JOIN_RIGHT"
