@@ -144,7 +144,7 @@ Our goal is that an ordinary user can:
 
 ### Example: Human-Readable IR Serialization
 
-The same pipeline can be represented as a simple, inspectable Intermediate Representation (IR) save as `pipeline.yaml`:
+The same pipeline can be represented as a simple, inspectable Intermediate Representation (IR) saved as `pipeline.yaml`:
 
 ```yaml
 wowdata: 0
@@ -216,6 +216,38 @@ Notes:
 
 ---
 
+## **Errors That Teach**
+
+In WowData™, error messages are part of the interface.
+
+Every user-facing error:
+
+1. explains what went wrong,
+
+2. explains why it happened,
+
+3. suggests what to do next.
+
+Errors are designed to teach correct mental models, not expose internal stack traces.
+
+### **Example: Errors That Teach**
+
+```python
+from wowdata import Source, Sink, Pipeline
+
+pipe = Pipeline(Source("missing.csv")).then(Sink("out.csv"))
+pipe.run()
+```
+
+produces the following error
+
+```shell
+wowdata.errors.WowDataUserError: [E_SOURCE_NOT_FOUND] Source file not found: 'missing.csv'.
+Hint: Check the path, working directory, and filename. If the file is elsewhere, pass an absolute path.
+```
+
+---
+
 ## Error Codes (what they mean + what to do)
 
 | Code | Example message | Action |
@@ -275,36 +307,6 @@ Notes:
 Keep this table handy when authoring pipelines; the “Action” column is the quickest way to resolve each error.
 
 ---
-
-## **Errors That Teach**
-
-In WowData™, error messages are part of the interface.
-
-Every user-facing error:
-
-1. explains what went wrong,
-
-2. explains why it happened,
-
-3. suggests what to do next.
-
-Errors are designed to teach correct mental models, not expose internal stack traces.
-
-### **Example: Errors That Teach**
-
-```python
-from wowdata import Source, Sink, Pipeline
-
-pipe = Pipeline(Source("missing.csv")).then(Sink("out.csv"))
-pipe.run()
-```
-
-produces the following error
-
-```shell
-wowdata.errors.WowDataUserError: [E_SOURCE_NOT_FOUND] Source file not found: 'missing.csv'.
-Hint: Check the path, working directory, and filename. If the file is elsewhere, pass an absolute path.
-```
 
 ## **Built on the Best**
 
