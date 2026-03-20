@@ -59,6 +59,14 @@ def test_cast_on_error_keep_returns_original():
     assert out[1][0] == "oops"
 
 
+def test_cast_on_error_none_treated_as_null():
+    """cast treats on_error=None as the null policy for YAML ergonomics."""
+    tbl = _tbl([("a",), ("oops",), ("3",)])
+    t = Transform("cast", params={"types": {"a": "integer"}, "on_error": None})
+    out = list(t.apply(tbl, context=PipelineContext()))
+    assert out == [("a",), (None,), (3,)]
+
+
 # ---------- select ----------
 def test_select_requires_columns():
     """select validation rejects missing params.columns."""

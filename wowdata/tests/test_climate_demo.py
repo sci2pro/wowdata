@@ -65,7 +65,7 @@ def test_climate_heat_events_pipeline_from_yaml(tmp_path):
             "        op: join\n"
             "        params:\n"
             "          right: climate_stations.csv\n"
-            "          \"on\": [station_id]\n"
+            "          on: [station_id]\n"
             "          how: left\n"
             "    - transform:\n"
             "        op: derive\n"

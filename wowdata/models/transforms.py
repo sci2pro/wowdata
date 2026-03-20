@@ -335,6 +335,13 @@ class _ExprTok:
 
 @register_transform("cast")
 class CastTransform(TransformImpl):
+    @staticmethod
+    def _normalize_on_error(value: Any) -> str:
+        # Be tolerant to YAML null for user ergonomics; canonical values remain strings.
+        if value is None:
+            return "null"
+        return value
+
     @classmethod
     def validate_params(cls, params: Dict[str, Any], input_schema: Optional[FrictionlessSchema] = None) -> None:
         types = params.get("types")
@@ -344,7 +351,7 @@ class CastTransform(TransformImpl):
                 "cast requires params.types as a non-empty mapping: {column: type, ...}.",
                 hint="Example: Transform('cast', params={'types': {'age': 'integer'}, 'on_error': 'null'})",
             )
-        on_error = params.get("on_error", "fail")
+        on_error = cls._normalize_on_error(params.get("on_error", "fail"))
         if on_error not in {"fail", "null", "keep"}:
             raise WowDataUserError(
                 "E_CAST_ON_ERROR",
@@ -355,7 +362,7 @@ class CastTransform(TransformImpl):
     @classmethod
     def apply(cls, table, *, params: Dict[str, Any], context: "PipelineContext"):
         types = params.get("types")
-        on_error = params.get("on_error", "fail")
+        on_error = cls._normalize_on_error(params.get("on_error", "fail"))
 
         header = list(etl.header(table))
         missing = [c for c in types.keys() if c not in header]

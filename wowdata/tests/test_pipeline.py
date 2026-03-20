@@ -494,3 +494,76 @@ def test_lock_schema_preserves_sinks(tmp_path):
 
     locked = pipe.lock_schema()
     assert isinstance(locked.steps[-1], Sink)
+
+
+def test_from_yaml_join_unquoted_on_key_is_normalized(tmp_path):
+    """from_yaml normalizes YAML 1.1 bool-key parsing for join 'on'."""
+    left = tmp_path / "left.csv"
+    right = tmp_path / "right.csv"
+    out = tmp_path / "out.csv"
+    pipe_yaml = tmp_path / "join.yaml"
+
+    left.write_text("id,name\n1,A\n2,B\n", encoding="utf-8")
+    right.write_text("id,age\n1,30\n2,40\n", encoding="utf-8")
+    pipe_yaml.write_text(
+        (
+            "wowdata: 0\n"
+            "pipeline:\n"
+            "  start:\n"
+            "    uri: left.csv\n"
+            "    type: csv\n"
+            "  steps:\n"
+            "    - transform:\n"
+            "        op: join\n"
+            "        params:\n"
+            "          right: right.csv\n"
+            "          on: [id]\n"
+            "          how: left\n"
+            "    - sink:\n"
+            "        uri: out.csv\n"
+            "        type: csv\n"
+        ),
+        encoding="utf-8",
+    )
+
+    pipe = Pipeline.from_yaml(pipe_yaml)
+    pipe.run()
+
+    rows = list(etl.fromcsv(out))
+    assert rows[1] == ("1", "A", "30")
+
+
+def test_from_yaml_cast_on_error_unquoted_null_is_normalized(tmp_path):
+    """from_yaml accepts cast params.on_error: null (YAML None) as cast null policy."""
+    src = tmp_path / "in.csv"
+    out = tmp_path / "out.csv"
+    pipe_yaml = tmp_path / "cast_null.yaml"
+
+    src.write_text("age\nx\n3\n", encoding="utf-8")
+    pipe_yaml.write_text(
+        (
+            "wowdata: 0\n"
+            "pipeline:\n"
+            "  start:\n"
+            "    uri: in.csv\n"
+            "    type: csv\n"
+            "  steps:\n"
+            "    - transform:\n"
+            "        op: cast\n"
+            "        params:\n"
+            "          types:\n"
+            "            age: integer\n"
+            "          on_error: null\n"
+            "    - sink:\n"
+            "        uri: out.csv\n"
+            "        type: csv\n"
+        ),
+        encoding="utf-8",
+    )
+
+    pipe = Pipeline.from_yaml(pipe_yaml)
+    pipe.run()
+
+    rows = list(etl.fromcsv(out))
+    assert rows[1] == ("",)
+    assert rows[2] == ("3",)

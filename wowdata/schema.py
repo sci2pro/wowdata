@@ -215,19 +215,30 @@ def _normalize_ir(ir: Any, *, base_dir: Optional[Path]) -> Dict[str, Any]:
                     hint="Example: params: {where: \"age >= 30\"}",
                 )
 
-            # Join: normalize params.right if present
-            if t2.get("op") == "join" and "right" in params:
-                r = params.get("right")
-                if isinstance(r, str):
-                    params["right"] = _norm_path(r, base_dir=base_dir)
-                elif isinstance(r, dict):
-                    r2: Dict[str, Any] = dict(r)
-                    ru = r2.get("uri")
-                    if isinstance(ru, str):
-                        r2["uri"] = _norm_path(ru, base_dir=base_dir)
-                    if "options" in r2 and r2["options"] is None:
-                        r2["options"] = {}
-                    params["right"] = r2
+            # Join: normalize YAML 1.1 boolean key oddities and right-side path descriptors.
+            if t2.get("op") == "join":
+                # In YAML 1.1, unquoted key `on` may parse as boolean True.
+                # Normalize `{true: [...]}` to `{"on": [...]}` for user-friendly behavior.
+                if "on" not in params and True in params:
+                    params["on"] = params.pop(True)
+
+                if "right" in params:
+                    r = params.get("right")
+                    if isinstance(r, str):
+                        params["right"] = _norm_path(r, base_dir=base_dir)
+                    elif isinstance(r, dict):
+                        r2: Dict[str, Any] = dict(r)
+                        ru = r2.get("uri")
+                        if isinstance(ru, str):
+                            r2["uri"] = _norm_path(ru, base_dir=base_dir)
+                        if "options" in r2 and r2["options"] is None:
+                            r2["options"] = {}
+                        params["right"] = r2
+
+            # Cast: in YAML, unquoted `null` parses to None. Accept it as the "null" policy.
+            if t2.get("op") == "cast" and isinstance(params, dict):
+                if "on_error" in params and params.get("on_error") is None:
+                    params["on_error"] = "null"
 
             norm_steps.append({"transform": t2})
             continue
