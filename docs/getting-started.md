@@ -58,3 +58,63 @@ Fallback command:
 ```bash
 wowdata run pipeline.yaml
 ```
+## CLI (v0)
+
+WowData™ includes a CLI for running YAML-serialized pipelines.
+
+After installing the package, use:
+
+```shell
+wow --help
+```
+
+If `wow` conflicts with another tool in your environment, use the fallback command:
+
+```shell
+wowdata --help
+```
+
+### Commands
+
+1. `wow run pipeline.yaml` (fallback: `wowdata run pipeline.yaml`)
+   - Executes the pipeline end-to-end.
+   - Returns non-zero on runtime failures.
+
+2. `wow validate pipeline.yaml` (fallback: `wowdata validate pipeline.yaml`)
+   - Parses YAML + IR and runs preflight checks on source/sink paths.
+
+3. `wow schema pipeline.yaml` (fallback: `wowdata schema pipeline.yaml`)
+   - Infers output schema without full pipeline execution.
+
+4. `wow lock-schema pipeline.yaml -o pipeline.locked.yaml` (fallback: `wowdata lock-schema ...`)
+   - Writes a schema-locked YAML by embedding per-transform `output_schema`.
+
+### Common flags
+
+- `--base-dir PATH` resolve relative paths in YAML from a specific directory.
+- `--json` print machine-readable JSON output.
+- `--sample-rows N` used by `schema` and `lock-schema` for bounded inference.
+- `--force` recompute schema inference even if cached.
+
+### CLI examples
+
+```shell
+# Run a serialized pipeline
+wow run pipeline.yaml
+
+# Validate structure and file paths before execution
+wow validate pipeline.yaml
+
+# Print inferred output schema as JSON
+wow schema pipeline.yaml --json
+
+# Save a locked pipeline snapshot
+wow lock-schema pipeline.yaml -o pipeline.locked.yaml
+```
+
+### Exit codes
+
+- `0`: success
+- `2`: CLI usage error
+- `3`: pipeline parse/validation error
+- `4`: pipeline runtime execution error

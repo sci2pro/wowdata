@@ -1,8 +1,10 @@
 # WowData™
 
-WowData™ is a human-centred data wrangling framework focused on making pipeline logic understandable and teachable for non-specialists.
+**WowData™ makes complex data engineering tasks easy for ordinary users.**
 
-Use this docs site as the canonical guide.
+WowData™ is a human-centred data wrangling and pipeline framework designed to make advanced data preparation *understandable*, *teachable*, and *inspectable*—without sacrificing power.
+
+It is built for people who need to work with real data, not just programmers.
 
 ## Start Here
 
