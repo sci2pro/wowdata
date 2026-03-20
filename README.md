@@ -158,7 +158,7 @@ pipeline:
         params:
           types:
             age: integer
-          on_error: null
+          on_error: "null"
     - transform:
         op: filter
         params:
@@ -257,6 +257,71 @@ wow lock-schema pipeline.yaml -o pipeline.locked.yaml
 - `2`: CLI usage error
 - `3`: pipeline parse/validation error
 - `4`: pipeline runtime execution error
+
+---
+
+## Climate Demo (Heat Events)
+
+This domain-focused example shows how WowData™ can help non-specialist climate teams clean station observations and
+produce an analysis-ready heat-event dataset from YAML.
+
+What the pipeline does:
+- casts messy numeric fields (`tmax_c`, `prcp_mm`) with explicit error handling
+- filters to quality-approved records (`qc_flag == 'A'`)
+- keeps only heat-event rows (`tmax_c >= 40`)
+- joins station metadata (name/country) from a second CSV
+- derives a simple risk flag (`is_extreme`)
+- writes a clean output CSV
+
+```yaml
+wowdata: 0
+pipeline:
+  start:
+    uri: climate_observations_raw.csv
+    type: csv
+  steps:
+    - transform:
+        op: cast
+        params:
+          types:
+            tmax_c: number
+            prcp_mm: number
+          on_error: null
+    - transform:
+        op: filter
+        params:
+          where: "qc_flag == 'A'"
+    - transform:
+        op: filter
+        params:
+          where: "tmax_c >= 40"
+    - transform:
+        op: join
+        params:
+          right: climate_stations.csv
+          "on": [station_id]
+          how: left
+    - transform:
+        op: derive
+        params:
+          new: is_extreme
+          expr: "tmax_c >= 42"
+    - sink:
+        uri: climate_heat_events.csv
+        type: csv
+```
+
+Run it from the pipeline directory:
+
+```shell
+wow run climate_heat_events.yaml
+```
+
+Fallback command:
+
+```shell
+wowdata run climate_heat_events.yaml
+```
 
 ---
 
