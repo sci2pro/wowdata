@@ -25,4 +25,5 @@ Hint: Check the path, working directory, and filename.
 - `E_YAML_PARSE`: invalid YAML syntax
 - `E_PIPELINE_ORDER`: transform appears after sink
 
-For full code/message coverage, see tests in `wowdata/tests/` and compact table in [REFERENCE.md](../../REFERENCE.md).
+For full code/message coverage, see tests in `wowdata/tests/` and compact table in
+[REFERENCE.md](https://github.com/sci2pro/wowdata/blob/main/REFERENCE.md).
