@@ -58,6 +58,10 @@ Homepage = "https://github.com/sci2pro/wowdata"
 Repository = "https://github.com/sci2pro/wowdata"
 Issues = "https://github.com/sci2pro/wowdata/issues"
 
+[project.scripts]
+wow = "wowdata.cli:main"
+wowdata = "wowdata.cli:main"
+
 [tool.setuptools]
 packages = ["wowdata"]
 
