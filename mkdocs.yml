@@ -1,0 +1,23 @@
+site_name: WowData
+site_url: https://wowdata.github.io/
+repo_url: https://github.com/sci2pro/wowdata
+repo_name: sci2pro/wowdata
+theme:
+  name: material
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Philosophy: philosophy.md
+  - Examples:
+      - Overview: examples/index.md
+      - Climate: examples/climate.md
+  - Reference:
+      - Overview: reference/index.md
+      - Transforms: reference/transforms.md
+      - Errors: reference/errors.md
+markdown_extensions:
+  - admonition
+  - codehilite
+  - tables
+  - toc:
+      permalink: true
