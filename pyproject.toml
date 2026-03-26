@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wowdata"
-version = "0.1.0"
+version = "0.1.1"
 description = "A human-centred, teachable data wrangling and pipeline framework."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -62,8 +62,8 @@ Issues = "https://github.com/sci2pro/wowdata/issues"
 wow = "wowdata.cli:main"
 wowdata = "wowdata.cli:main"
 
-[tool.setuptools]
-packages = ["wowdata"]
+[tool.setuptools.packages.find]
+include = ["wowdata*"]
 
 [tool.setuptools.package-data]
 wowdata = ["py.typed"]
