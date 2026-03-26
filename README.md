@@ -1,5 +1,9 @@
 # WowData™
 
+[![PyPI version](https://img.shields.io/pypi/v/wowdata)](https://pypi.org/project/wowdata/)
+[![Python versions](https://img.shields.io/pypi/pyversions/wowdata)](https://pypi.org/project/wowdata/)
+[![Coverage](https://codecov.io/gh/sci2pro/wowdata/branch/main/graph/badge.svg)](https://codecov.io/gh/sci2pro/wowdata)
+
 WowData™ is a human-centred data wrangling and pipeline framework designed to make real-world data cleanup understandable, teachable, and inspectable.
 
 ## Install
