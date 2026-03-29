@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Dict, Any, Optional, Type, Callable, List, Tuple
 
 import petl as etl
@@ -1101,6 +1102,202 @@ class DropTransform(TransformImpl):
         drop_cols = set(params.get("columns") or [])
         fields = [f for f in input_schema.get("fields", []) if f.get("name") not in drop_cols]
         return {"fields": fields}
+
+
+@register_transform("string")
+class StringTransform(TransformImpl):
+    @staticmethod
+    def _target_column(params: Dict[str, Any]) -> str:
+        column = params.get("column")
+        new = params.get("new")
+        return new if isinstance(new, str) and new.strip() else column
+
+    @staticmethod
+    def _compile_pattern(pattern: str):
+        try:
+            return re.compile(pattern)
+        except re.error as e:
+            raise WowDataUserError(
+                "E_STRING_PATTERN",
+                f"Invalid string regex pattern: {pattern!r}.",
+                hint=str(e),
+            ) from e
+
+    @classmethod
+    def validate_params(cls, params: Dict[str, Any], input_schema: Optional[FrictionlessSchema] = None) -> None:
+        column = params.get("column")
+        action = params.get("action")
+        pattern = params.get("pattern")
+        overwrite = params.get("overwrite", False)
+        new = params.get("new")
+        repl = params.get("repl", "")
+        group = params.get("group", 0)
+
+        if not isinstance(column, str) or not column.strip():
+            raise WowDataUserError(
+                "E_STRING_PARAMS",
+                "string requires params.column as a non-empty column name string.",
+                hint="Example: Transform('string', params={'column': 'Price', 'action': 'regex_replace', 'pattern': '[^0-9.]', 'repl': ''})",
+            )
+        if action not in {"regex_replace", "regex_extract"}:
+            raise WowDataUserError(
+                "E_STRING_PARAMS",
+                "string params.action must be one of: regex_replace, regex_extract.",
+                hint="Example: Transform('string', params={'column': 'p24_size', 'action': 'regex_extract', 'pattern': '([0-9]+(?:\\\\.[0-9]+)?)', 'group': 1, 'new': 'size_value'})",
+            )
+        if not isinstance(pattern, str) or not pattern:
+            raise WowDataUserError(
+                "E_STRING_PARAMS",
+                "string requires params.pattern as a non-empty regex string.",
+                hint="Example: Transform('string', params={'column': 'Price', 'action': 'regex_replace', 'pattern': '[^0-9.]'})",
+            )
+        regex = cls._compile_pattern(pattern)
+        if new is not None and (not isinstance(new, str) or not new.strip()):
+            raise WowDataUserError(
+                "E_STRING_PARAMS",
+                "string params.new must be a non-empty column name string when provided.",
+                hint="Example: Transform('string', params={'column': 'p24_size', 'action': 'regex_extract', 'new': 'size_value', 'pattern': '...'})",
+            )
+        if not isinstance(overwrite, bool):
+            raise WowDataUserError(
+                "E_STRING_PARAMS",
+                "string params.overwrite must be a boolean.",
+                hint="Example: Transform('string', params={'column': 'Price', 'action': 'regex_replace', 'overwrite': true, 'pattern': '[^0-9.]'})",
+            )
+        if action == "regex_replace" and not isinstance(repl, str):
+            raise WowDataUserError(
+                "E_STRING_PARAMS",
+                "string params.repl must be a string for regex_replace.",
+                hint="Example: Transform('string', params={'column': 'Price', 'action': 'regex_replace', 'pattern': '\\\\s+', 'repl': ' '})",
+            )
+        if action == "regex_extract" and not isinstance(group, (int, str)):
+            raise WowDataUserError(
+                "E_STRING_PARAMS",
+                "string params.group must be an integer or named group string for regex_extract.",
+                hint="Example: Transform('string', params={'column': 'p24_size', 'action': 'regex_extract', 'pattern': '(?P<num>[0-9]+)', 'group': 'num'})",
+            )
+        if action == "regex_extract":
+            if isinstance(group, int) and (group < 0 or group > regex.groups):
+                raise WowDataUserError(
+                    "E_STRING_GROUP",
+                    f"string regex_extract group {group!r} was not found in the pattern.",
+                    hint="Use group 0 for the whole match, a valid numeric capture group, or a named group that exists.",
+                )
+            if isinstance(group, str) and group not in regex.groupindex:
+                raise WowDataUserError(
+                    "E_STRING_GROUP",
+                    f"string regex_extract group {group!r} was not found in the pattern.",
+                    hint="Use group 0 for the whole match, a valid numeric capture group, or a named group that exists.",
+                )
+
+        if input_schema and isinstance(input_schema, dict):
+            fields = input_schema.get("fields")
+            if isinstance(fields, list) and fields:
+                names = {f.get("name") for f in fields if isinstance(f, dict)}
+                if column not in names:
+                    raise WowDataUserError(
+                        "E_STRING_UNKNOWN_COL",
+                        f"string refers to column '{column}' not present in the current schema.",
+                        hint="Check spelling/case, or apply string after a transform that introduces this column.",
+                    )
+                target = cls._target_column(params)
+                if target in names and target != column and not overwrite:
+                    raise WowDataUserError(
+                        "E_STRING_EXISTS",
+                        f"string would create column '{target}' but it already exists in the current schema.",
+                        hint="Set params.overwrite=true to replace it, or choose a different params.new.",
+                    )
+
+    @classmethod
+    def apply(cls, table, *, params: Dict[str, Any], context: "PipelineContext"):
+        column = params.get("column")
+        action = params.get("action")
+        pattern = params.get("pattern")
+        repl = params.get("repl", "")
+        group = params.get("group", 0)
+        overwrite = params.get("overwrite", False)
+        target = cls._target_column(params)
+
+        columns = list(etl.header(table))
+        if column not in columns:
+            raise WowDataUserError(
+                "E_STRING_UNKNOWN_COL",
+                f"string refers to column '{column}' not present in the current table.",
+                hint="Check spelling/case, or apply string after a transform that introduces this column.",
+            )
+        if target in columns and target != column and not overwrite:
+            raise WowDataUserError(
+                "E_STRING_EXISTS",
+                f"string would create column '{target}' but it already exists.",
+                hint="Set params.overwrite=true to replace it, or choose a different params.new.",
+            )
+
+        regex = cls._compile_pattern(pattern)
+
+        def _coerce(v: Any) -> Optional[str]:
+            if v is None:
+                return None
+            return str(v)
+
+        def _transform(v: Any) -> Optional[str]:
+            s = _coerce(v)
+            if s is None:
+                return None
+            if action == "regex_replace":
+                return regex.sub(repl, s)
+            m = regex.search(s)
+            if not m:
+                return None
+            try:
+                return m.group(group)
+            except IndexError as e:
+                raise WowDataUserError(
+                    "E_STRING_GROUP",
+                    f"string regex_extract group {group!r} was not found in the pattern.",
+                    hint="Use group 0 for the whole match, a valid numeric capture group, or a named group that exists.",
+                ) from e
+            except KeyError as e:
+                raise WowDataUserError(
+                    "E_STRING_GROUP",
+                    f"string regex_extract group {group!r} was not found in the pattern.",
+                    hint="Use group 0 for the whole match, a valid numeric capture group, or a named group that exists.",
+                ) from e
+
+        if target == column:
+            return etl.convert(table, column, _transform)
+        return etl.addfield(table, target, lambda r: _transform(r[column]))
+
+    @classmethod
+    def output_schema(cls, input_schema: Optional[FrictionlessSchema], params: Dict[str, Any]) -> Optional[
+        FrictionlessSchema]:
+        if not input_schema or not isinstance(input_schema, dict):
+            return input_schema
+        fields = input_schema.get("fields")
+        if not isinstance(fields, list):
+            return input_schema
+
+        column = params.get("column")
+        overwrite = params.get("overwrite", False)
+        target = cls._target_column(params)
+        out_fields: List[Dict[str, Any]] = []
+        replaced = False
+
+        for f in fields:
+            if isinstance(f, dict) and f.get("name") == target:
+                replaced = True
+                if target == column or overwrite:
+                    nf = dict(f)
+                    nf["type"] = "string"
+                    out_fields.append(nf)
+                else:
+                    out_fields.append(f)
+                continue
+            out_fields.append(f)
+
+        if isinstance(target, str) and target.strip() and not replaced:
+            out_fields.append({"name": target, "type": "string"})
+
+        return {"fields": out_fields}
 
 
 @register_transform("validate")

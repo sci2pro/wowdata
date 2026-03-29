@@ -1,0 +1,72 @@
+wowdata: 0
+pipeline:
+  start:
+    uri: ml_experiment_runs_raw.csv
+    type: csv
+  steps:
+    - transform:
+        op: string
+        params:
+          column: experiment_name
+          action: regex_extract
+          pattern: "^([a-z]+)::"
+          group: 1
+          new: domain
+    - transform:
+        op: string
+        params:
+          column: experiment_name
+          action: regex_extract
+          pattern: "::([A-Za-z][A-Za-z0-9_-]*)"
+          group: 1
+          new: model_family
+    - transform:
+        op: string
+        params:
+          column: reported_f1
+          action: regex_extract
+          pattern: "([0-9]+(?:\\.[0-9]+)?)"
+          group: 1
+          new: f1_clean
+    - transform:
+        op: string
+        params:
+          column: train_minutes_raw
+          action: regex_extract
+          pattern: "([0-9]+(?:\\.[0-9]+)?)"
+          group: 1
+          new: train_minutes
+    - transform:
+        op: cast
+        params:
+          types:
+            f1_clean: number
+            train_minutes: number
+          on_error: "null"
+    - transform:
+        op: filter
+        params:
+          where: "status_note == 'ship-ready'"
+    - transform:
+        op: filter
+        params:
+          where: "f1_clean >= 0.9"
+    - transform:
+        op: derive
+        params:
+          new: is_fast_track
+          expr: "f1_clean >= 0.93 and train_minutes <= 120"
+    - transform:
+        op: select
+        params:
+          columns:
+            - run_id
+            - domain
+            - model_family
+            - f1_clean
+            - train_minutes
+            - owner
+            - is_fast_track
+    - sink:
+        uri: ml_model_candidates.csv
+        type: csv

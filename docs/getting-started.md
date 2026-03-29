@@ -77,6 +77,18 @@ cd examples
 wow run climate_heat_events.yaml
 ```
 
+If you want a quick string-cleaning example, the `string` transform can normalize messy text before `cast`:
+
+```yaml
+- transform:
+    op: string
+    params:
+      column: Price
+      action: regex_replace
+      pattern: "[^0-9.]+"
+      repl: ""
+```
+
 ## CLI (v0)
 
 WowData™ includes a CLI for running YAML-serialized pipelines.

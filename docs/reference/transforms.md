@@ -7,12 +7,14 @@
 | `derive` | `new`: column name, `expr`: expression string | `overwrite` (bool, default `False`), `strict` (bool, default `True`) | `Transform("derive", params={"new": "is_adult", "expr": "age >= 18", "overwrite": True})` |
 | `filter` | `where`: expression string | `strict` (bool, default `True`) | `Transform("filter", params={"where": "age >= 30 and country == 'KE'"})` |
 | `drop` | `columns`: list of column names | — | `Transform("drop", params={"columns": ["debug_col"]})` |
+| `string` | `column`, `action`, `pattern` | `new`, `overwrite` (bool, default `False`), `repl` (for `regex_replace`), `group` (for `regex_extract`, default `0`) | `Transform("string", params={"column": "Price", "action": "regex_replace", "pattern": "[^0-9.]+", "repl": ""})` |
 | `validate` | — | `sample_rows` (int, default `5000`), `fail` (bool, default `True`), `strict_schema` (bool, default `True`) | `Transform("validate", params={"sample_rows": 1000, "fail": False})` |
 | `join` | `right`: URI or descriptor, `on`: column/list of columns | `how` (`inner` default/`left`), `right_on`, `suffixes` (`("_left","_right")` default), `options` (dict) | `Transform("join", params={"right": "other.csv", "on": ["id"], "how": "left"})` |
 
 Notes:
 - Expression params (`expr`, `where`) use the same DSL as `filter`/`derive` (logical ops, comparisons, literals, column names).
 - Types accepted by `cast` align with frictionless types (`integer`, `number`, `string`, etc.).
+- `string.action` currently supports `regex_replace` and `regex_extract`.
 - `validate` requires the optional `frictionless` dependency to be installed.
 
 ## YAML Ergonomics

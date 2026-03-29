@@ -185,6 +185,67 @@ def test_drop_unknown_column_with_schema():
     assert getattr(ex.value, "code", None) == "E_DROP_UNKNOWN_COL"
 
 
+# ---------- string ----------
+def test_string_regex_replace_happy_path():
+    """string regex_replace can normalize a messy text column in place."""
+    tbl = _tbl([("Price",), ("\n KSh 75 000 000 \n",)])
+    t = Transform(
+        "string",
+        params={"column": "Price", "action": "regex_replace", "pattern": r"[^0-9.]+", "repl": ""},
+    )
+    out = list(t.apply(tbl, context=PipelineContext()))
+    assert out == [("Price",), ("75000000",)]
+
+
+def test_string_regex_extract_to_new_column():
+    """string regex_extract can pull a subset into a new column."""
+    tbl = _tbl([("p24_size",), ("0.5 acres",), ("350 m²",), ("",)])
+    t = Transform(
+        "string",
+        params={
+            "column": "p24_size",
+            "action": "regex_extract",
+            "pattern": r"([0-9]+(?:\.[0-9]+)?)",
+            "group": 1,
+            "new": "size_value",
+        },
+    )
+    out = list(t.apply(tbl, context=PipelineContext()))
+    assert out == [("p24_size", "size_value"), ("0.5 acres", "0.5"), ("350 m²", "350"), ("", None)]
+
+
+def test_string_requires_valid_params_and_columns():
+    """string validates required params and schema-aware column checks."""
+    ctx = PipelineContext(schema={"fields": [{"name": "Price"}]})
+    with pytest.raises(WowDataUserError) as ex:
+        Transform("string", params={"column": "Price"}).apply(_tbl([("Price",), ("x",)]), context=ctx)
+    assert getattr(ex.value, "code", None) == "E_STRING_PARAMS"
+
+    with pytest.raises(WowDataUserError) as ex:
+        Transform(
+            "string",
+            params={"column": "Missing", "action": "regex_replace", "pattern": r"\s+", "repl": " "},
+        ).apply(_tbl([("Price",), ("x",)]), context=ctx)
+    assert getattr(ex.value, "code", None) == "E_STRING_UNKNOWN_COL"
+
+
+def test_string_extract_bad_group_errors():
+    """string regex_extract raises a clear error for missing groups."""
+    tbl = _tbl([("p24_size",), ("0.5 acres",)])
+    t = Transform(
+        "string",
+        params={
+            "column": "p24_size",
+            "action": "regex_extract",
+            "pattern": r"([0-9]+(?:\.[0-9]+)?)",
+            "group": 2,
+        },
+    )
+    with pytest.raises(WowDataUserError) as ex:
+        list(t.apply(tbl, context=PipelineContext()))
+    assert getattr(ex.value, "code", None) == "E_STRING_GROUP"
+
+
 # ---------- validate ----------
 def test_validate_rejects_bad_params():
     """validate rejects invalid sample_rows."""
@@ -342,4 +403,6 @@ def test_join_read_errors(monkeypatch):
 # ---------- registry ----------
 def test_transform_registry_contains_expected_ops():
     """Registry contains all shipped transform ops."""
-    assert {"cast", "select", "derive", "filter", "drop", "validate", "join"}.issubset(set(TRANSFORM_REGISTRY.keys()))
+    assert {"cast", "select", "derive", "filter", "drop", "string", "validate", "join"}.issubset(
+        set(TRANSFORM_REGISTRY.keys())
+    )

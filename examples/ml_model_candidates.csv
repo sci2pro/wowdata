@@ -1,0 +1,4 @@
+run_id,domain,model_family,f1_clean,train_minutes,owner,is_fast_track
+RUN-001,vision,RedwoodNet-v2,0.912,184.0,A. Imani,False
+RUN-004,audio,WavePatch-7,0.934,96.0,R. Hale,True
+RUN-005,nlp,InkLattice-small,0.901,143.0,M. Okafor,False

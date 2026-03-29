@@ -11,6 +11,7 @@ nav:
   - Examples:
       - Overview: examples/index.md
       - Climate: examples/climate.md
+      - Machine Learning: examples/machine-learning.md
   - Reference:
       - Overview: reference/index.md
       - Transforms: reference/transforms.md

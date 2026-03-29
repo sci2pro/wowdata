@@ -1,0 +1,7 @@
+run_id,experiment_name,reported_f1,train_minutes_raw,status_note,owner
+RUN-001,vision::RedwoodNet-v2 [aug=heavy],F1=0.912*,184 min (gpu),ship-ready,A. Imani
+RUN-002,vision::RedwoodNet-v3 [aug=light],F1=0.887?,~201 min,needs-review,A. Imani
+RUN-003,tabular::QuartzBoost_v1,score missing,n/a,blocked,K. Soto
+RUN-004,audio::WavePatch-7,F1=0.934 (validated),96min,ship-ready,R. Hale
+RUN-005,nlp::InkLattice-small,F1=0.901*,143 minutes,ship-ready,M. Okafor
+RUN-006,vision::OrbitMixer-v5,F1=0.879,188 min,archived,R. Hale

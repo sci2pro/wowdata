@@ -47,6 +47,7 @@ Exit codes:
 | `derive` | `new`: column name, `expr`: expression string | `overwrite` (bool, default `False`), `strict` (bool, default `True`) | `Transform("derive", params={"new": "is_adult", "expr": "age >= 18", "overwrite": True})` |
 | `filter` | `where`: expression string | `strict` (bool, default `True`) | `Transform("filter", params={"where": "age >= 30 and country == 'KE'"})` |
 | `drop` | `columns`: list of column names | — | `Transform("drop", params={"columns": ["debug_col"]})` |
+| `string` | `column`, `action`, `pattern` | `new`, `overwrite` (bool, default `False`), `repl` (for `regex_replace`), `group` (for `regex_extract`, default `0`) | `Transform("string", params={"column": "Price", "action": "regex_replace", "pattern": "[^0-9.]+", "repl": ""})` |
 | `validate` | — | `sample_rows` (int, default `5000`), `fail` (bool, default `True`), `strict_schema` (bool, default `True`) | `Transform("validate", params={"sample_rows": 1000, "fail": False})` |
 | `join` | `right`: URI or descriptor, `on`: column/list of columns | `how` (`inner` default/`left`), `right_on`, `suffixes` (`("_left","_right")` default), `options` (dict) | `Transform("join", params={"right": "other.csv", "on": ["id"], "how": "left"})` |
 
@@ -54,9 +55,22 @@ Notes:
 
 - Expression params (`expr`, `where`) use the same DSL as `filter`/`derive` (logical ops, comparisons, literals, column names).
 - Types accepted by `cast` align with frictionless types (`integer`, `number`, `string`, etc.).
+- `string.action` currently supports `regex_replace` and `regex_extract`.
 - `validate` requires the optional `frictionless` dependency to be installed.
 - Canonical `cast.on_error` values are string enums; unquoted YAML `null` is accepted and normalized to `"null"`.
 - Unquoted YAML `on:` in join params is accepted even when the parser treats it as a boolean key.
+
+String cleaning example:
+
+```yaml
+- transform:
+    op: string
+    params:
+      column: Price
+      action: regex_replace
+      pattern: "[^0-9.]+"
+      repl: ""
+```
 
 ## YAML IR Shape
 
@@ -132,6 +146,10 @@ Hint: Check the path, working directory, and filename.
 | E_FILTER_UNSUPPORTED | `Unsupported construct in filter expression.` | Stick to comparisons, and/or/not, parentheses. |
 | E_DROP_PARAMS | `drop requires params.columns...` | Provide columns to drop. |
 | E_DROP_UNKNOWN_COL | `drop refers to column(s) not present...` | Drop only existing columns. |
+| E_STRING_PARAMS | `string requires params.column/action/pattern...` | Provide a valid string transform config. |
+| E_STRING_PATTERN | `Invalid string regex pattern: ...` | Fix the regex syntax. |
+| E_STRING_GROUP | `string regex_extract group 'x' was not found...` | Use an existing group index or group name. |
+| E_STRING_UNKNOWN_COL / E_STRING_EXISTS | Missing source column or target column collision. | Fix the column name, or set `overwrite=true`. |
 | E_VALIDATE_PARAMS | `validate params.sample_rows must be a positive integer.` | Fix validate parameters. |
 | E_VALIDATE_IMPORT | `Validation requires the 'frictionless' dependency...` | Install `frictionless`. |
 | E_VALIDATE_READ | `validate could not read a sample of rows...` | Check source options/permissions. |
