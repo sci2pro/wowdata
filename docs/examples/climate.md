@@ -1,5 +1,8 @@
 # Climate Examples
 
+The YAML files and CSV inputs for these examples live in the repository `examples/` directory. From the
+repo root, run them with `--base-dir examples` so relative file references resolve correctly.
+
 ## Heat Events
 
 This workflow cleans station observations and produces an analysis-ready heat-events dataset.
@@ -69,7 +72,7 @@ pipeline:
 Run:
 
 ```bash
-wow run climate_heat_events.yaml
+wow run examples/climate_heat_events.yaml --base-dir examples
 ```
 
 ### Expected Output
@@ -150,7 +153,7 @@ pipeline:
 Run:
 
 ```bash
-wow run climate_rainfall_alerts.yaml
+wow run examples/climate_rainfall_alerts.yaml --base-dir examples
 ```
 
 ### Expected Output

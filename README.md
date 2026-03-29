@@ -60,6 +60,19 @@ Fallback command if `wow` conflicts in your shell:
 wowdata run pipeline.yaml
 ```
 
+## Repository Examples
+
+The repository now includes runnable sample pipelines and data files under `examples/`.
+
+From the repo root, you can run them directly with `--base-dir` so relative CSV paths resolve correctly:
+
+```bash
+wow run examples/climate_heat_events.yaml --base-dir examples
+wow run examples/climate_rainfall_alerts.yaml --base-dir examples
+```
+
+You can also `cd examples` and run the same YAML files from there.
+
 ## Documentation
 
 - Philosophy: [docs/philosophy.md](docs/philosophy.md)

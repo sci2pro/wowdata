@@ -1,0 +1,6 @@
+station_id,date,rain_mm,qc_flag,normal_mm,deficit_mm,is_deficit_alert
+ST101,2025-03-01,2.5,A,25.0,22.5,True
+ST101,2025-03-02,1.0,A,25.0,24.0,True
+ST102,2025-03-01,,A,12.0,,False
+ST103,2025-03-01,18.0,A,20.0,2.0,False
+ST103,2025-03-02,22.0,A,20.0,-2.0,False

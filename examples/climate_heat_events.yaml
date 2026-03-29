@@ -1,0 +1,35 @@
+wowdata: 0
+pipeline:
+  start:
+    uri: climate_observations_raw.csv
+    type: csv
+  steps:
+    - transform:
+        op: cast
+        params:
+          types:
+            tmax_c: number
+            prcp_mm: number
+          on_error: "null"
+    - transform:
+        op: filter
+        params:
+          where: "qc_flag == 'A'"
+    - transform:
+        op: filter
+        params:
+          where: "tmax_c >= 40"
+    - transform:
+        op: join
+        params:
+          right: climate_stations.csv
+          on: [station_id]
+          how: left
+    - transform:
+        op: derive
+        params:
+          new: is_extreme
+          expr: "tmax_c >= 42"
+    - sink:
+        uri: climate_heat_events.csv
+        type: csv

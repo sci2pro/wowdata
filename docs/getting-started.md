@@ -58,6 +58,25 @@ Fallback command:
 ```bash
 wowdata run pipeline.yaml
 ```
+
+## Repository Examples
+
+The repository includes ready-to-run sample pipelines and data files in `examples/`.
+
+From the repo root:
+
+```bash
+wow run examples/climate_heat_events.yaml --base-dir examples
+wow run examples/climate_rainfall_alerts.yaml --base-dir examples
+```
+
+Or run from inside the directory:
+
+```bash
+cd examples
+wow run climate_heat_events.yaml
+```
+
 ## CLI (v0)
 
 WowData™ includes a CLI for running YAML-serialized pipelines.
@@ -101,6 +120,9 @@ wowdata --help
 ```shell
 # Run a serialized pipeline
 wow run pipeline.yaml
+
+# Run a repository example from the repo root
+wow run examples/climate_heat_events.yaml --base-dir examples
 
 # Validate structure and file paths before execution
 wow validate pipeline.yaml

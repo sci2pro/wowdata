@@ -1,0 +1,35 @@
+wowdata: 0
+pipeline:
+  start:
+    uri: climate_rainfall_obs.csv
+    type: csv
+  steps:
+    - transform:
+        op: cast
+        params:
+          types:
+            rain_mm: number
+          on_error: "null"
+    - transform:
+        op: filter
+        params:
+          where: "qc_flag == 'A'"
+    - transform:
+        op: join
+        params:
+          right: climate_rainfall_normals.csv
+          on: [station_id]
+          how: left
+    - transform:
+        op: derive
+        params:
+          new: deficit_mm
+          expr: "normal_mm - rain_mm"
+    - transform:
+        op: derive
+        params:
+          new: is_deficit_alert
+          expr: "deficit_mm >= 20"
+    - sink:
+        uri: climate_rainfall_alerts.csv
+        type: csv

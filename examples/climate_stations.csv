@@ -1,0 +1,5 @@
+station_id,station_name,country,elevation_m
+ST001,Nairobi Central,KE,1661
+ST002,Garissa,KE,151
+ST003,Mombasa,KE,50
+ST005,Kisumu,KE,1131

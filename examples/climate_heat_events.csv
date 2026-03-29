@@ -1,0 +1,3 @@
+station_id,date,tmax_c,prcp_mm,qc_flag,station_name,country,elevation_m,is_extreme
+ST001,2025-01-13,41.2,1.2,A,Nairobi Central,KE,1661,False
+ST005,2025-01-14,40.1,5.3,A,Kisumu,KE,1131,False

@@ -2,6 +2,16 @@
 
 This page contains runnable, domain-focused examples for WowData™.
 
+All example YAML files and CSV fixtures are checked into the repository under `examples/`. From the repo
+root, run them with:
+
+```bash
+wow run examples/climate_heat_events.yaml --base-dir examples
+wow run examples/climate_rainfall_alerts.yaml --base-dir examples
+```
+
+You can also `cd examples` and run the YAML files directly there.
+
 ## Climate Demo (Heat Events)
 
 This example shows how WowData™ can help non-specialist climate teams clean station observations and produce an

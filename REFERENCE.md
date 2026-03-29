@@ -21,6 +21,16 @@ Commands:
 - `schema`: infer output schema without full run
 - `lock-schema`: write schema-locked YAML
 
+Repository examples:
+
+```bash
+wow run examples/climate_heat_events.yaml --base-dir examples
+wow run examples/climate_rainfall_alerts.yaml --base-dir examples
+```
+
+Use `--base-dir examples` when running the checked-in sample YAML files from the repo root so relative
+CSV paths resolve against the `examples/` directory.
+
 Exit codes:
 
 - `0`: success

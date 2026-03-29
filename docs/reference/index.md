@@ -2,6 +2,9 @@
 
 Use this section for API and format lookup.
 
+For runnable end-to-end samples, see the checked-in `examples/` directory and the examples guide. From the
+repo root, run them with `wow run examples/<pipeline>.yaml --base-dir examples`.
+
 - [Transforms](transforms.md)
 - [Errors](errors.md)
 
