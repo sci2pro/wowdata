@@ -443,6 +443,56 @@ def test_from_yaml_reads_path(tmp_path, monkeypatch):
     assert isinstance(loaded.start, Source)
 
 
+def test_from_yaml_treats_long_multiline_text_as_yaml(monkeypatch, tmp_path):
+    """from_yaml should not probe inline YAML text as a filesystem path."""
+    captured = {}
+
+    class DummyYAML:
+        @staticmethod
+        def safe_load(text):
+            captured["text"] = text
+            return {
+                "wowdata": 0,
+                "pipeline": {"start": {"uri": str(tmp_path / "in.csv"), "type": "csv"}, "steps": []},
+            }
+
+    (tmp_path / "in.csv").write_text("a\n1\n", encoding="utf-8")
+    monkeypatch.setattr(mp, "yaml", DummyYAML)
+
+    text = "wowdata: 0\npipeline:\n  start:\n    uri: in.csv\n    type: csv\n" + ("# filler\n" * 400)
+    loaded = Pipeline.from_yaml(text)
+
+    assert isinstance(loaded.start, Source)
+    assert captured["text"] == text
+
+
+def test_from_yaml_falls_back_to_text_when_path_probe_raises_oserror(monkeypatch, tmp_path):
+    """from_yaml should treat the input as YAML text if path probing fails."""
+    captured = {}
+
+    class DummyYAML:
+        @staticmethod
+        def safe_load(text):
+            captured["text"] = text
+            return {
+                "wowdata": 0,
+                "pipeline": {"start": {"uri": str(tmp_path / "in.csv"), "type": "csv"}, "steps": []},
+            }
+
+    def boom(self):
+        raise OSError("filename too long")
+
+    (tmp_path / "in.csv").write_text("a\n1\n", encoding="utf-8")
+    monkeypatch.setattr(mp, "yaml", DummyYAML)
+    monkeypatch.setattr(mp.Path, "exists", boom)
+
+    text = "not_a_real_path_or_yaml_marker"
+    loaded = Pipeline.from_yaml(text)
+
+    assert isinstance(loaded.start, Source)
+    assert captured["text"] == text
+
+
 def test_from_yaml_accepts_non_path_objects(tmp_path, monkeypatch):
     """from_yaml accepts arbitrary objects and passes them to yaml.safe_load."""
     class DummyObj:

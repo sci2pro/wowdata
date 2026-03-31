@@ -1,10 +1,11 @@
 # Changelog
 
-## 0.2.2
+## 0.2.3
 
 - Added epidemiology examples covering line-list cleanup and weekly incidence preparation.
 - Integrated the epidemiology walkthrough into the examples navigation and repository examples index.
 - Added regression tests to ensure the checked-in epidemiology example pipelines execute successfully.
+- Fixed `Pipeline.from_yaml()` so inline YAML text is not misinterpreted as a filesystem path on CI.
 
 ## 0.2.1
 

@@ -278,12 +278,25 @@ class Pipeline:
             )
         # Accept path-like input for convenience
         if isinstance(text_or_path, (str, Path)):
-            p = Path(text_or_path)
-            if p.exists():
+            if isinstance(text_or_path, Path):
+                p = text_or_path
                 base_dir = base_dir or p.parent
                 text = p.read_text(encoding="utf-8")
             else:
-                text = str(text_or_path)
+                raw = str(text_or_path)
+                # Multiline / document-like strings should be treated as YAML text, not file paths.
+                if any(tok in raw for tok in ("\n", "\r", "\t", ": ")):
+                    text = raw
+                else:
+                    p = Path(raw)
+                    try:
+                        if p.exists():
+                            base_dir = base_dir or p.parent
+                            text = p.read_text(encoding="utf-8")
+                        else:
+                            text = raw
+                    except OSError:
+                        text = raw
         else:
             text = text_or_path  # type: ignore[assignment]
         try:
