@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Expanded `string` with Python-style operations including casing, trimming, splitting, prefix/suffix removal, formatting, encoding, partitioning, replacement, and zero-padding.
+- Added dedicated examples and reference documentation for the new `string` operations.
+- Added `tox` configuration with Python 3.14 as the default test environment.
+- Raised package coverage for the `wowdata` codebase to 100%.
+
 ## 0.2.0
 
 - Added a new `string` transform for column-level string cleaning.
