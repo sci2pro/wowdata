@@ -116,6 +116,50 @@ pipeline:
           right: epi_sites.csv
           on: [facility_code]
           how: left
+        output_schema:
+          fields:
+            - name: case_id
+              type: string
+            - name: patient_name_raw
+              type: string
+            - name: sex_raw
+              type: string
+            - name: age_raw
+              type: integer
+            - name: onset_date_raw
+              type: string
+            - name: district_code_raw
+              type: string
+            - name: facility_label
+              type: string
+            - name: symptom_blob
+              type: string
+            - name: outcome_note
+              type: string
+            - name: classification_note
+              type: string
+            - name: patient_name
+              type: string
+            - name: sex
+              type: string
+            - name: district_code
+              type: string
+            - name: facility_compact
+              type: string
+            - name: facility_parts
+              type: any
+            - name: facility_code
+              type: string
+            - name: symptom_tokens
+              type: any
+            - name: outcome_clean
+              type: string
+            - name: classification
+              type: string
+            - name: facility_name
+              type: string
+            - name: county
+              type: string
     - transform:
         op: derive
         params:

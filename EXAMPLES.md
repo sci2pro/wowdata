@@ -469,7 +469,7 @@ Examples:
 
 ## Epidemiology Demo (Line Lists and Weekly Incidence)
 
-This branch also includes epidemiology-oriented examples that lean heavily on the newer `string` actions.
+The repository also includes epidemiology-oriented examples that lean heavily on the newer `string` actions.
 
 ### Example files
 

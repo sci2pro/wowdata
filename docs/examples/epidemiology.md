@@ -1,6 +1,13 @@
 # Epidemiology Examples
 
-These are draft examples for epidemiological data workflows. They are written to exercise the newer `string` operations and become runnable once the `string` transform implementation is present on this branch.
+These examples show epidemiological data workflows built around the newer `string` operations.
+
+Run them from the repo root with:
+
+```bash
+wow run examples/epi_line_list_cleanup.yaml --base-dir examples
+wow run examples/epi_weekly_incidence_cleanup.yaml --base-dir examples
+```
 
 ## Line List Cleanup
 
