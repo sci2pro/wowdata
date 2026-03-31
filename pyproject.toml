@@ -45,6 +45,7 @@ keywords = [
 dev = [
   "pytest>=7.0",
   "pytest-cov",
+  "tox>=4.0",
   "black",
   "ruff",
   "mypy",
@@ -89,9 +90,21 @@ strict = false
 warn_return_any = true
 warn_unused_configs = true
 
-[tools.coverage.run]
+[tool.coverage.run]
 omit = [
-  "wowdata/wowdata/tests/examples/",
-  "wowdata/wowdata/tests/",
-  "wowdata/experiments/"
+  "wowdata/tests/*",
+  "wowdata/tests/examples/*",
+  "experiments/*"
+]
+
+[tool.tox]
+requires = ["tox>=4"]
+env_list = ["py314"]
+
+[tool.tox.env_run_base]
+description = "Run the test suite under pytest"
+package = "wheel"
+extras = ["dev"]
+commands = [
+  ["pytest"]
 ]

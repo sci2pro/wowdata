@@ -314,3 +314,155 @@ Expected output (`ml_model_candidates.csv`):
 | RUN-001 | vision | RedwoodNet-v2 | 0.912 | 184.0 | A. Imani | False |
 | RUN-004 | audio | WavePatch-7 | 0.934 | 96.0 | R. Hale | True |
 | RUN-005 | nlp | InkLattice-small | 0.901 | 143.0 | M. Okafor | False |
+
+## String Operation Examples
+
+These short examples show how to use the non-regex `string` actions that were added alongside `regex_replace` and `regex_extract`.
+
+### Clean casing and whitespace
+
+```yaml
+- transform:
+    op: string
+    params:
+      column: raw_name
+      action: strip
+- transform:
+    op: string
+    params:
+      column: raw_name
+      action: title
+```
+
+Example:
+
+- `"  nairobi county "` becomes `"Nairobi County"`
+
+### Remove prefixes and suffixes
+
+```yaml
+- transform:
+    op: string
+    params:
+      column: sku
+      action: removeprefix
+      prefix: "SKU-"
+- transform:
+    op: string
+    params:
+      column: sku
+      action: removesuffix
+      suffix: ".csv"
+```
+
+Example:
+
+- `"SKU-001.csv"` becomes `"001"`
+
+### Replace separators after lowercasing
+
+```yaml
+- transform:
+    op: string
+    params:
+      column: category
+      action: lower
+- transform:
+    op: string
+    params:
+      column: category
+      action: replace
+      old: "_"
+      new_value: " "
+```
+
+Example:
+
+- `"HOME_APPLIANCES"` becomes `"home appliances"`
+
+### Split comma-separated tags into a new column
+
+```yaml
+- transform:
+    op: string
+    params:
+      column: tags
+      action: split
+      sep: ","
+      new: tag_list
+```
+
+Example:
+
+- `"climate,rainfall,alert"` becomes `["climate", "rainfall", "alert"]`
+
+### Partition structured codes
+
+```yaml
+- transform:
+    op: string
+    params:
+      column: station_code
+      action: partition
+      sep: "-"
+      new: station_code_parts
+```
+
+Example:
+
+- `"KE-047-NRB"` becomes `("KE", "-", "047-NRB")`
+
+### Format human-readable messages
+
+```yaml
+- transform:
+    op: string
+    params:
+      column: template
+      action: format
+      kwargs:
+        name: RedwoodNet-v2
+        score: "0.934"
+      new: rendered_message
+```
+
+Example:
+
+- `"Run {name} scored {score}"` becomes `"Run RedwoodNet-v2 scored 0.934"`
+
+### Encode text to bytes
+
+```yaml
+- transform:
+    op: string
+    params:
+      column: payload
+      action: encode
+      encoding: utf-8
+      new: payload_bytes
+```
+
+Example:
+
+- `"hello"` becomes `b"hello"`
+
+### Pad and invert case
+
+```yaml
+- transform:
+    op: string
+    params:
+      column: postal_code
+      action: zfill
+      width: 5
+- transform:
+    op: string
+    params:
+      column: headline
+      action: swapcase
+```
+
+Examples:
+
+- `"7"` becomes `"00007"`
+- `"mIXed Case"` becomes `"MixED cASE"`

@@ -1,6 +1,8 @@
 import json
 import runpy
 import sys
+import types
+from datetime import date, datetime
 from pathlib import Path
 
 import petl as etl
@@ -23,6 +25,18 @@ from wowdata.models.transforms import (
 
 def _tbl(data):
     return etl.wrap(data)
+
+
+def _cell(value):
+    return (lambda: value).__closure__[0]
+
+
+def _nested_fn(parent, name, **freevars):
+    code = next(
+        c for c in parent.__code__.co_consts if isinstance(c, types.CodeType) and c.co_name == name
+    )
+    closure = tuple(_cell(freevars[var]) for var in code.co_freevars)
+    return types.FunctionType(code, parent.__globals__, name=name, closure=closure)
 
 
 def test_error_str_without_hint():
@@ -273,6 +287,8 @@ def test_transform_base_helpers_and_ir_parsing():
     with pytest.raises(WowDataUserError):
         _expr_parse("(a]", allow_arith=False)
     with pytest.raises(WowDataUserError):
+        _expr_parse("(a(", allow_arith=False)
+    with pytest.raises(WowDataUserError):
         _expr_parse("true false", allow_arith=False)
     with pytest.raises(WowDataUserError):
         _expr_parse(")", allow_arith=False)
@@ -289,3 +305,360 @@ def test_transform_base_helpers_and_ir_parsing():
         _transform_from_ir({"op": "x", "params": 1})  # type: ignore[dict-item]
     with pytest.raises(WowDataUserError):
         _transform_from_ir({"op": "x", "output_schema": []})  # type: ignore[dict-item]
+
+
+def test_cast_nested_helpers_and_wrapper_branches():
+    class Intish:
+        def __int__(self):
+            return 7
+
+    class Floatish:
+        def __float__(self):
+            return 2.5
+
+    to_int = _nested_fn(mt.CastTransform.apply, "_to_int")
+    to_number = _nested_fn(mt.CastTransform.apply, "_to_number")
+    to_bool = _nested_fn(mt.CastTransform.apply, "_to_bool")
+    to_date = _nested_fn(mt.CastTransform.apply, "_to_date", date=date, datetime=datetime)
+    to_datetime = _nested_fn(mt.CastTransform.apply, "_to_datetime", datetime=datetime)
+    wrap_fail = _nested_fn(mt.CastTransform.apply, "_wrap", on_error="fail")
+    wrap_null = _nested_fn(mt.CastTransform.apply, "_wrap", on_error="null")
+    wrap_keep = _nested_fn(mt.CastTransform.apply, "_wrap", on_error="keep")
+
+    assert to_int(None) is None
+    assert to_int(4.0) == 4
+    assert to_int(Intish()) == 7
+    with pytest.raises(WowDataUserError):
+        to_int("bad")
+
+    assert to_number(None) is None
+    assert to_number(Floatish()) == 2.5
+    with pytest.raises(WowDataUserError):
+        to_number(object())
+
+    assert to_bool(None) is None
+    assert to_bool(True) is True
+    assert to_bool("no") is False
+    with pytest.raises(WowDataUserError):
+        to_bool("maybe")
+
+    now = datetime(2024, 1, 2, 3, 4, 5)
+    assert to_date(None) is None
+    assert to_date(now) == now.date()
+    with pytest.raises(WowDataUserError):
+        to_date("bad-date")
+    with pytest.raises(WowDataUserError):
+        to_date(123)
+
+    assert to_datetime(None) is None
+    with pytest.raises(WowDataUserError):
+        to_datetime("bad-datetime")
+    with pytest.raises(WowDataUserError):
+        to_datetime(123)
+
+    with pytest.raises(WowDataUserError) as ex:
+        wrap_fail(lambda v: (_ for _ in ()).throw(WowDataUserError("E_CAST_COERCE", "nope")))("x")
+    assert ex.value.code == "E_CAST_COERCE"
+    assert wrap_null(lambda v: (_ for _ in ()).throw(WowDataUserError("E_CAST_COERCE", "nope")))("x") is None
+    assert wrap_keep(lambda v: (_ for _ in ()).throw(WowDataUserError("E_CAST_COERCE", "nope")))("x") == "x"
+    with pytest.raises(WowDataUserError) as ex:
+        wrap_fail(lambda v: (_ for _ in ()).throw(WowDataUserError("E_OTHER", "nope")))("x")
+    assert ex.value.code == "E_OTHER"
+    with pytest.raises(WowDataUserError) as ex:
+        wrap_fail(lambda v: (_ for _ in ()).throw(RuntimeError("boom")))("x")
+    assert ex.value.code == "E_CAST_INTERNAL"
+
+
+def test_derive_and_filter_remaining_internal_branches(monkeypatch):
+    class Numish:
+        def __float__(self):
+            return 9.5
+
+    derive_looks = _nested_fn(mt.DeriveTransform.apply, "_looks_number")
+    derive_float = _nested_fn(mt.DeriveTransform.apply, "_to_float")
+    filter_looks = _nested_fn(mt.FilterTransform.apply, "_looks_number")
+    filter_float = _nested_fn(mt.FilterTransform.apply, "_to_float")
+
+    assert derive_looks(None) is False
+    assert derive_looks("   ") is False
+    assert derive_looks(object()) is False
+    assert derive_float(True) == 1.0
+    assert derive_float(Numish()) == 9.5
+
+    assert filter_looks(None) is False
+    assert filter_looks("   ") is False
+    assert filter_looks(object()) is False
+    assert filter_float(True) == 1.0
+    assert filter_float(Numish()) == 9.5
+
+    with pytest.raises(WowDataUserError) as ex:
+        list(Transform("derive", params={"new": "x", "expr": "alpah + 1"}).apply(_tbl([("alpha",), ("1",)]), context=PipelineContext()))
+    assert ex.value.code == "E_DERIVE_UNKNOWN_COL"
+    assert "Did you mean" in (ex.value.hint or "")
+
+    monkeypatch.setattr(mt, "_expr_parse", lambda expr, allow_arith: (_ for _ in ()).throw(WowDataUserError("E_X", "boom")))
+    with pytest.raises(WowDataUserError) as ex:
+        Transform("derive", params={"new": "x", "expr": "a"}).apply(_tbl([("a",), ("1",)]), context=PipelineContext())
+    assert ex.value.code == "E_X"
+    monkeypatch.undo()
+
+    class RowDict(dict):
+        def __getitem__(self, key):
+            raise KeyError(key)
+
+    def _derive_value(expr, row, **params):
+        monkey = pytest.MonkeyPatch()
+        monkey.setattr(mt.etl, "header", lambda table: ["a", "b"])
+        seen = []
+
+        def fake_addfield(table, new, fn):
+            seen.append(fn(row))
+            return _tbl([("a", new), ("1", seen[-1])])
+
+        monkey.setattr(mt.etl, "addfield", fake_addfield)
+        try:
+            Transform("derive", params={"new": "x", "expr": expr, **params}).apply(
+                _tbl([("a", "b"), ("1", "2")]), context=PipelineContext()
+            )
+        finally:
+            monkey.undo()
+        return seen[-1]
+
+    assert _derive_value("-a", RowDict(a=None, b="2")) is None
+    assert _derive_value("-a", RowDict(a="oops", b="2"), strict=False) is None
+    assert _derive_value("a - b", RowDict(a="3", b="2")) == 1.0
+    assert _derive_value("a * b", RowDict(a="3", b="2")) == 6.0
+    assert _derive_value("a / b", RowDict(a="3", b="2")) == 1.5
+    assert _derive_value("a < b", RowDict(a="1", b="2")) is True
+    assert _derive_value("a <= b", RowDict(a="1", b="2")) is True
+    assert _derive_value("a < b", RowDict(a="x", b="2"), strict=False) is False
+    assert _derive_value("a >= b", RowDict(a="a", b="b")) is False
+    assert _derive_value("a < b", RowDict(a="a", b="b")) is True
+    assert _derive_value("a <= b", RowDict(a="a", b="b")) is True
+    assert _derive_value("a != b", RowDict(a="a", b="b")) is True
+    assert _derive_value("a and b or not a", RowDict(a="a", b="b")) is True
+    assert _derive_value("not a", RowDict(a="", b="b")) is True
+    assert _derive_value("a", ()) is None
+
+    with pytest.raises(WowDataUserError) as ex:
+        list(Transform("derive", params={"new": "x", "expr": "a + b"}).apply(_tbl([("a", "b"), ("x", 1)]), context=PipelineContext()))
+    assert ex.value.code == "E_DERIVE_TYPE"
+    with pytest.raises(WowDataUserError) as ex:
+        list(Transform("derive", params={"new": "x", "expr": "a > b"}).apply(_tbl([("a", "b"), ("x", 1)]), context=PipelineContext()))
+    assert ex.value.code == "E_DERIVE_TYPE"
+    assert _derive_value("a > b", RowDict(a=object(), b="2"), strict=False) is False
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(mt, "_expr_parse", lambda expr, allow_arith: 5)
+    out = list(Transform("derive", params={"new": "x", "expr": "a"}).apply(_tbl([("a",), ("1",)]), context=PipelineContext()))
+    assert out[1][1] == 5
+    monkeypatch.undo()
+
+    assert Transform("derive", params={"new": "a", "expr": "1", "overwrite": False}).output_schema(
+        {"fields": [{"name": "a", "type": "string"}]}
+    )["fields"][0]["type"] == "string"
+
+    with pytest.raises(WowDataUserError) as ex:
+        list(Transform("filter", params={"where": "alpah == 1"}).apply(_tbl([("alpha",), ("1",)]), context=PipelineContext()))
+    assert ex.value.code == "E_FILTER_UNKNOWN_COL"
+    assert "Did you mean" in (ex.value.hint or "")
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(mt, "_expr_parse", lambda expr, allow_arith: (_ for _ in ()).throw(WowDataUserError("E_X", "boom")))
+    with pytest.raises(WowDataUserError) as ex:
+        Transform("filter", params={"where": "a == 1"}).apply(_tbl([("a",), ("1",)]), context=PipelineContext())
+    assert ex.value.code == "E_X"
+    monkeypatch.undo()
+
+    def _filter_value(where, row, **params):
+        monkey = pytest.MonkeyPatch()
+        monkey.setattr(mt.etl, "header", lambda table: ["a", "b"])
+        seen = []
+
+        def fake_select(table, fn):
+            seen.append(fn(row))
+            return _tbl([("a", "b"), ("1", "2")])
+
+        monkey.setattr(mt.etl, "select", fake_select)
+        try:
+            Transform("filter", params={"where": where, **params}).apply(
+                _tbl([("a", "b"), ("1", "2")]), context=PipelineContext()
+            )
+        finally:
+            monkey.undo()
+        return seen[-1]
+
+    assert _filter_value("a <= b", RowDict(a="1", b="2")) is True
+    assert _filter_value("a >= b", RowDict(a="a", b="b")) is False
+    assert _filter_value("a > b", RowDict(a="b", b="a")) is True
+    assert _filter_value("a < b", RowDict(a="a", b="b")) is True
+    assert _filter_value("a <= b", RowDict(a="a", b="a")) is True
+    assert _filter_value("a and b", RowDict(a="a", b="b")) is True
+    assert _filter_value("a > b", RowDict(a=object(), b="2"), strict=False) is False
+    assert _filter_value("a", ()) is False
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(mt, "_expr_parse", lambda expr, allow_arith: 5)
+    out = list(Transform("filter", params={"where": "a"}).apply(_tbl([("a",), ("1",)]), context=PipelineContext()))
+    assert out == [("a",), ("1",)]
+    monkeypatch.undo()
+
+
+def test_validate_and_join_remaining_branches(monkeypatch):
+    wow_type_validate = _nested_fn(mt.ValidateTransform.apply, "_wow_type")
+    wow_type_join = _nested_fn(mt.JoinTransform.apply, "_wow_type")
+
+    assert wow_type_validate(None) == "null"
+    assert wow_type_validate(True) == "boolean"
+    assert wow_type_validate(1) == "integer"
+    assert wow_type_validate(1.5) == "number"
+    assert wow_type_validate(datetime(2024, 1, 1, 1, 1, 1)) == "datetime"
+    assert wow_type_validate(date(2024, 1, 1)) == "date"
+    assert wow_type_validate(object()) == "string"
+
+    assert wow_type_join(None) == "null"
+    assert wow_type_join(True) == "boolean"
+    assert wow_type_join(1) == "integer"
+    assert wow_type_join(1.5) == "number"
+    assert wow_type_join(datetime(2024, 1, 1, 1, 1, 1)) == "datetime"
+    assert wow_type_join(date(2024, 1, 1)) == "date"
+    assert wow_type_join(object()) == "string"
+
+    with pytest.raises(WowDataUserError) as ex:
+        Transform("validate", params={"fail": "bad"}).apply(_tbl([("a",), ("1",)]), context=PipelineContext())
+    assert ex.value.code == "E_VALIDATE_PARAMS"
+    with pytest.raises(WowDataUserError) as ex:
+        Transform("validate", params={"strict_schema": "bad"}).apply(_tbl([("a",), ("1",)]), context=PipelineContext())
+    assert ex.value.code == "E_VALIDATE_PARAMS"
+
+    class DummyReport:
+        valid = False
+
+        def to_descriptor(self):
+            return {
+                "tasks": [
+                    {
+                        "errors": [
+                            {"note": "generic bad", "rowNumber": 9, "fieldName": "missing"},
+                            {"message": "msg only"},
+                        ],
+                        "warnings": [],
+                    }
+                ]
+            }
+
+    class DummyResource:
+        def __init__(self, data=None, schema=None):
+            self.data = data
+            self.schema = schema
+
+        def validate(self, *args, **kwargs):
+            return DummyReport()
+
+    monkeypatch.setattr(mt, "Resource", DummyResource)
+    monkeypatch.setattr(mt.etl, "head", lambda table, n: [("a", "b"), ("1",), (True, 2.0)])
+    monkeypatch.setattr(mt.etl, "header", lambda table: ["a", "b"])
+    monkeypatch.setattr(mt.etl, "data", lambda t: [("1",), (True, 2.0)])
+    ctx = PipelineContext(schema={"fields": [{"name": "a", "type": "integer"}, {"name": "b", "type": "number"}]})
+    list(Transform("validate", params={"fail": False}).apply(_tbl([("a", "b"), ("1", "2")]), context=ctx))
+    assert "generic bad" in ctx.validations[-1]["error_preview"][0]
+    assert "msg only" in ctx.validations[-1]["error_preview"][1]
+
+    class FailingResource:
+        def __init__(self, data=None, schema=None):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(mt, "Resource", FailingResource)
+    with pytest.raises(WowDataUserError) as ex:
+        list(Transform("validate", params={"fail": False, "strict_schema": False}).apply(_tbl([("a",), ("1",)]), context=PipelineContext()))
+    assert ex.value.code == "E_VALIDATE_FAILED_TO_RUN"
+
+    fake_frictionless = types.SimpleNamespace(
+        Schema=type(
+            "Schema",
+            (),
+            {"from_descriptor": classmethod(lambda cls, desc: (_ for _ in ()).throw(RuntimeError("bad schema")))}
+        )
+    )
+    monkeypatch.setitem(sys.modules, "frictionless", fake_frictionless)
+    monkeypatch.setattr(mt, "Resource", DummyResource)
+    ctx_schema = PipelineContext(schema={"fields": [{"name": "a", "type": "integer"}]})
+    list(Transform("validate", params={"fail": False}).apply(_tbl([("a",), ("1",)]), context=ctx_schema))
+
+    real_import = __import__
+
+    def broken_import(name, *args, **kwargs):
+        if name == "datetime":
+            raise RuntimeError("boom")
+        return real_import(name, *args, **kwargs)
+
+    import builtins
+
+    monkeypatch.setattr(builtins, "__import__", broken_import)
+    assert wow_type_validate("x") == "string"
+    assert wow_type_join("x") == "string"
+    monkeypatch.setattr(builtins, "__import__", real_import)
+
+    predominant = _nested_fn(mt.JoinTransform.apply, "_predominant_type", _wow_type=wow_type_join)
+    monkeypatch.setattr(mt.etl, "head", lambda tbl, n: tbl)
+    monkeypatch.setattr(mt.etl, "data", lambda t: t)
+    assert predominant([{"id": "x"}], "id", ["id"]) == "string"
+    assert predominant([(None,), ("x",)], "id", ["id"]) == "string"
+    assert predominant([("x",)], "id", []) == "null"
+    monkeypatch.setattr(mt.etl, "data", lambda t: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert predominant([("x",)], "id", ["id"]) == "unknown"
+    monkeypatch.setattr(mt.etl, "data", lambda t: t)
+
+    with pytest.raises(WowDataUserError) as ex:
+        Transform("join", params={"right": "x.csv", "on": ["id"], "left_on": ["id"], "right_on": ["id"]}).apply(
+            _tbl([("id",), ("1",)]), context=PipelineContext()
+        )
+    assert ex.value.code == "E_JOIN_PARAMS"
+    with pytest.raises(WowDataUserError) as ex:
+        Transform("join", params={"right": "x.csv", "left_on": ["id"]}).apply(
+            _tbl([("id",), ("1",)]), context=PipelineContext()
+        )
+    assert ex.value.code == "E_JOIN_PARAMS"
+
+    monkeypatch.setattr(mt, "_source_from_descriptor", lambda desc: (_ for _ in ()).throw(WowDataUserError("E_SRC", "bad")))
+    with pytest.raises(WowDataUserError) as ex:
+        Transform("join", params={"right": "x.csv", "on": ["id"]}).apply(_tbl([("id",), ("1",)]), context=PipelineContext())
+    assert ex.value.code == "E_SRC"
+
+    class BadRight:
+        def table(self):
+            raise WowDataUserError("E_RIGHT", "bad")
+
+    monkeypatch.setattr(mt, "_source_from_descriptor", lambda desc: BadRight())
+    with pytest.raises(WowDataUserError) as ex:
+        Transform("join", params={"right": "x.csv", "on": ["id"]}).apply(_tbl([("id",), ("1",)]), context=PipelineContext())
+    assert ex.value.code == "E_RIGHT"
+
+    left = "LEFT"
+    right = "RIGHT"
+
+    class RightSource:
+        def table(self):
+            return right
+
+    monkeypatch.setattr(mt, "_source_from_descriptor", lambda desc: RightSource())
+    monkeypatch.setattr(mt.etl, "header", lambda table: ["id"])
+    monkeypatch.setattr(mt.etl, "head", lambda table, n: table)
+    monkeypatch.setattr(mt.etl, "data", lambda t: [(1,)] if t == "LEFT" else [("1",)])
+    with pytest.raises(WowDataUserError) as ex:
+        Transform("join", params={"right": "x.csv", "on": ["id"]}).apply(left, context=PipelineContext())
+    assert ex.value.code == "E_JOIN_KEY_TYPE_MISMATCH"
+
+    monkeypatch.setattr(mt.etl, "join", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+    with pytest.raises(WowDataUserError) as ex:
+        Transform("join", params={"right": "x.csv", "on": ["id"], "strict_types": False}).apply(
+            _tbl([("id",), ("1",)]), context=PipelineContext()
+        )
+    assert ex.value.code == "E_JOIN_FAILED"
+
+    monkeypatch.setattr(mt.etl, "join", lambda *args, **kwargs: (_ for _ in ()).throw(WowDataUserError("E_JOIN_DIRECT", "boom")))
+    with pytest.raises(WowDataUserError) as ex:
+        Transform("join", params={"right": "x.csv", "on": ["id"], "strict_types": False}).apply(
+            _tbl([("id",), ("1",)]), context=PipelineContext()
+        )
+    assert ex.value.code == "E_JOIN_DIRECT"

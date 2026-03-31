@@ -1106,6 +1106,29 @@ class DropTransform(TransformImpl):
 
 @register_transform("string")
 class StringTransform(TransformImpl):
+    _ACTION_RESULT_TYPES = {
+        "capitalize": "string",
+        "casefold": "string",
+        "encode": "any",
+        "format": "string",
+        "lower": "string",
+        "lstrip": "string",
+        "partition": "any",
+        "regex_extract": "string",
+        "regex_replace": "string",
+        "removeprefix": "string",
+        "removesuffix": "string",
+        "replace": "string",
+        "rpartition": "any",
+        "rstrip": "string",
+        "split": "any",
+        "strip": "string",
+        "swapcase": "string",
+        "title": "string",
+        "upper": "string",
+        "zfill": "string",
+    }
+
     @staticmethod
     def _target_column(params: Dict[str, Any]) -> str:
         column = params.get("column")
@@ -1123,28 +1146,24 @@ class StringTransform(TransformImpl):
                 hint=str(e),
             ) from e
 
+    @staticmethod
+    def _validate_optional_string(value: Any, *, key: str, action: str, allow_none: bool = False) -> None:
+        if allow_none and value is None:
+            return
+        if not isinstance(value, str):
+            raise WowDataUserError(
+                "E_STRING_PARAMS",
+                f"string params.{key} must be a string for {action}.",
+                hint=f"Check the params for string action '{action}'.",
+            )
+
     @classmethod
-    def validate_params(cls, params: Dict[str, Any], input_schema: Optional[FrictionlessSchema] = None) -> None:
-        column = params.get("column")
+    def _validate_regex_params(cls, params: Dict[str, Any]) -> None:
         action = params.get("action")
         pattern = params.get("pattern")
-        overwrite = params.get("overwrite", False)
-        new = params.get("new")
         repl = params.get("repl", "")
         group = params.get("group", 0)
 
-        if not isinstance(column, str) or not column.strip():
-            raise WowDataUserError(
-                "E_STRING_PARAMS",
-                "string requires params.column as a non-empty column name string.",
-                hint="Example: Transform('string', params={'column': 'Price', 'action': 'regex_replace', 'pattern': '[^0-9.]', 'repl': ''})",
-            )
-        if action not in {"regex_replace", "regex_extract"}:
-            raise WowDataUserError(
-                "E_STRING_PARAMS",
-                "string params.action must be one of: regex_replace, regex_extract.",
-                hint="Example: Transform('string', params={'column': 'p24_size', 'action': 'regex_extract', 'pattern': '([0-9]+(?:\\\\.[0-9]+)?)', 'group': 1, 'new': 'size_value'})",
-            )
         if not isinstance(pattern, str) or not pattern:
             raise WowDataUserError(
                 "E_STRING_PARAMS",
@@ -1152,18 +1171,6 @@ class StringTransform(TransformImpl):
                 hint="Example: Transform('string', params={'column': 'Price', 'action': 'regex_replace', 'pattern': '[^0-9.]'})",
             )
         regex = cls._compile_pattern(pattern)
-        if new is not None and (not isinstance(new, str) or not new.strip()):
-            raise WowDataUserError(
-                "E_STRING_PARAMS",
-                "string params.new must be a non-empty column name string when provided.",
-                hint="Example: Transform('string', params={'column': 'p24_size', 'action': 'regex_extract', 'new': 'size_value', 'pattern': '...'})",
-            )
-        if not isinstance(overwrite, bool):
-            raise WowDataUserError(
-                "E_STRING_PARAMS",
-                "string params.overwrite must be a boolean.",
-                hint="Example: Transform('string', params={'column': 'Price', 'action': 'regex_replace', 'overwrite': true, 'pattern': '[^0-9.]'})",
-            )
         if action == "regex_replace" and not isinstance(repl, str):
             raise WowDataUserError(
                 "E_STRING_PARAMS",
@@ -1190,6 +1197,134 @@ class StringTransform(TransformImpl):
                     hint="Use group 0 for the whole match, a valid numeric capture group, or a named group that exists.",
                 )
 
+    @classmethod
+    def _validate_non_regex_params(cls, params: Dict[str, Any]) -> None:
+        action = params.get("action")
+
+        if action in {"capitalize", "casefold", "lower", "swapcase", "title", "upper"}:
+            return
+        if action in {"strip", "lstrip", "rstrip"}:
+            cls._validate_optional_string(params.get("chars"), key="chars", action=action, allow_none=True)
+            return
+        if action in {"partition", "rpartition"}:
+            sep = params.get("sep")
+            if not isinstance(sep, str) or not sep:
+                raise WowDataUserError(
+                    "E_STRING_PARAMS",
+                    f"string params.sep must be a non-empty string for {action}.",
+                    hint=f"Example: Transform('string', params={{'column': 'txt', 'action': '{action}', 'sep': ':'}})",
+                )
+            return
+        if action == "split":
+            sep = params.get("sep")
+            cls._validate_optional_string(sep, key="sep", action=action, allow_none=True)
+            if sep == "":
+                raise WowDataUserError(
+                    "E_STRING_PARAMS",
+                    "string params.sep cannot be an empty string for split.",
+                    hint="Pass a non-empty string, or omit sep to split on whitespace.",
+                )
+            maxsplit = params.get("maxsplit")
+            if maxsplit is not None and not isinstance(maxsplit, int):
+                raise WowDataUserError(
+                    "E_STRING_PARAMS",
+                    "string params.maxsplit must be an integer for split.",
+                    hint="Example: Transform('string', params={'column': 'txt', 'action': 'split', 'sep': ',', 'maxsplit': 1})",
+                )
+            return
+        if action in {"removeprefix", "removesuffix"}:
+            key = "prefix" if action == "removeprefix" else "suffix"
+            value = params.get(key)
+            if not isinstance(value, str):
+                raise WowDataUserError(
+                    "E_STRING_PARAMS",
+                    f"string params.{key} must be a string for {action}.",
+                    hint=f"Example: Transform('string', params={{'column': 'txt', 'action': '{action}', '{key}': 'pre'}})",
+                )
+            return
+        if action == "replace":
+            old = params.get("old")
+            new_value = params.get("new_value")
+            count = params.get("count")
+            if not isinstance(old, str) or not isinstance(new_value, str):
+                raise WowDataUserError(
+                    "E_STRING_PARAMS",
+                    "string params.old and params.new_value must be strings for replace.",
+                    hint="Example: Transform('string', params={'column': 'txt', 'action': 'replace', 'old': '-', 'new_value': ' '})",
+                )
+            if count is not None and not isinstance(count, int):
+                raise WowDataUserError(
+                    "E_STRING_PARAMS",
+                    "string params.count must be an integer for replace.",
+                    hint="Example: Transform('string', params={'column': 'txt', 'action': 'replace', 'old': '-', 'new_value': ' ', 'count': 1})",
+                )
+            return
+        if action == "format":
+            args = params.get("args", [])
+            kwargs = params.get("kwargs", {})
+            if not isinstance(args, (list, tuple)):
+                raise WowDataUserError(
+                    "E_STRING_PARAMS",
+                    "string params.args must be a list or tuple for format.",
+                    hint="Example: Transform('string', params={'column': 'tmpl', 'action': 'format', 'args': ['Alice']})",
+                )
+            if not isinstance(kwargs, dict) or any(not isinstance(k, str) for k in kwargs):
+                raise WowDataUserError(
+                    "E_STRING_PARAMS",
+                    "string params.kwargs must be a mapping with string keys for format.",
+                    hint="Example: Transform('string', params={'column': 'tmpl', 'action': 'format', 'kwargs': {'name': 'Alice'}})",
+                )
+            return
+        if action == "encode":
+            cls._validate_optional_string(params.get("encoding", "utf-8"), key="encoding", action=action)
+            cls._validate_optional_string(params.get("errors", "strict"), key="errors", action=action)
+            return
+        if action == "zfill":
+            width = params.get("width")
+            if not isinstance(width, int):
+                raise WowDataUserError(
+                    "E_STRING_PARAMS",
+                    "string params.width must be an integer for zfill.",
+                    hint="Example: Transform('string', params={'column': 'zip', 'action': 'zfill', 'width': 5})",
+                )
+            return
+
+    @classmethod
+    def validate_params(cls, params: Dict[str, Any], input_schema: Optional[FrictionlessSchema] = None) -> None:
+        column = params.get("column")
+        action = params.get("action")
+        overwrite = params.get("overwrite", False)
+        new = params.get("new")
+
+        if not isinstance(column, str) or not column.strip():
+            raise WowDataUserError(
+                "E_STRING_PARAMS",
+                "string requires params.column as a non-empty column name string.",
+                hint="Example: Transform('string', params={'column': 'Price', 'action': 'regex_replace', 'pattern': '[^0-9.]', 'repl': ''})",
+            )
+        if action not in cls._ACTION_RESULT_TYPES:
+            raise WowDataUserError(
+                "E_STRING_PARAMS",
+                "string params.action must be a supported string operation.",
+                hint="Supported actions include regex_replace, regex_extract, lower, replace, split, strip, upper, and zfill.",
+            )
+        if action in {"regex_replace", "regex_extract"}:
+            cls._validate_regex_params(params)
+        else:
+            cls._validate_non_regex_params(params)
+        if new is not None and (not isinstance(new, str) or not new.strip()):
+            raise WowDataUserError(
+                "E_STRING_PARAMS",
+                "string params.new must be a non-empty column name string when provided.",
+                hint="Example: Transform('string', params={'column': 'p24_size', 'action': 'regex_extract', 'new': 'size_value', 'pattern': '...'})",
+            )
+        if not isinstance(overwrite, bool):
+            raise WowDataUserError(
+                "E_STRING_PARAMS",
+                "string params.overwrite must be a boolean.",
+                hint="Example: Transform('string', params={'column': 'Price', 'action': 'regex_replace', 'overwrite': true, 'pattern': '[^0-9.]'})",
+            )
+
         if input_schema and isinstance(input_schema, dict):
             fields = input_schema.get("fields")
             if isinstance(fields, list) and fields:
@@ -1212,9 +1347,6 @@ class StringTransform(TransformImpl):
     def apply(cls, table, *, params: Dict[str, Any], context: "PipelineContext"):
         column = params.get("column")
         action = params.get("action")
-        pattern = params.get("pattern")
-        repl = params.get("repl", "")
-        group = params.get("group", 0)
         overwrite = params.get("overwrite", False)
         target = cls._target_column(params)
 
@@ -1232,35 +1364,92 @@ class StringTransform(TransformImpl):
                 hint="Set params.overwrite=true to replace it, or choose a different params.new.",
             )
 
-        regex = cls._compile_pattern(pattern)
+        regex = None
+        if action in {"regex_replace", "regex_extract"}:
+            regex = cls._compile_pattern(params.get("pattern"))
 
         def _coerce(v: Any) -> Optional[str]:
             if v is None:
                 return None
             return str(v)
 
-        def _transform(v: Any) -> Optional[str]:
+        def _transform(v: Any):
             s = _coerce(v)
             if s is None:
                 return None
-            if action == "regex_replace":
-                return regex.sub(repl, s)
-            m = regex.search(s)
-            if not m:
-                return None
             try:
-                return m.group(group)
+                if action == "regex_replace":
+                    return regex.sub(params.get("repl", ""), s)
+                if action == "regex_extract":
+                    m = regex.search(s)
+                    if not m:
+                        return None
+                    return m.group(params.get("group", 0))
+                if action == "capitalize":
+                    return s.capitalize()
+                if action == "casefold":
+                    return s.casefold()
+                if action == "encode":
+                    return s.encode(params.get("encoding", "utf-8"), params.get("errors", "strict"))
+                if action == "format":
+                    return s.format(*params.get("args", []), **params.get("kwargs", {}))
+                if action == "lower":
+                    return s.lower()
+                if action == "lstrip":
+                    return s.lstrip(params.get("chars"))
+                if action == "partition":
+                    return s.partition(params.get("sep"))
+                if action == "removeprefix":
+                    return s.removeprefix(params.get("prefix"))
+                if action == "removesuffix":
+                    return s.removesuffix(params.get("suffix"))
+                if action == "replace":
+                    count = params.get("count")
+                    if count is None:
+                        return s.replace(params.get("old"), params.get("new_value"))
+                    return s.replace(params.get("old"), params.get("new_value"), count)
+                if action == "rpartition":
+                    return s.rpartition(params.get("sep"))
+                if action == "rstrip":
+                    return s.rstrip(params.get("chars"))
+                if action == "split":
+                    if "maxsplit" in params:
+                        return s.split(params.get("sep"), params.get("maxsplit"))
+                    return s.split(params.get("sep"))
+                if action == "strip":
+                    return s.strip(params.get("chars"))
+                if action == "swapcase":
+                    return s.swapcase()
+                if action == "title":
+                    return s.title()
+                if action == "upper":
+                    return s.upper()
+                if action == "zfill":
+                    return s.zfill(params.get("width"))
+                raise WowDataUserError(
+                    "E_STRING_PARAMS",
+                    f"string params.action {action!r} is not supported.",
+                    hint="Choose a supported string action.",
+                )
             except IndexError as e:
                 raise WowDataUserError(
                     "E_STRING_GROUP",
-                    f"string regex_extract group {group!r} was not found in the pattern.",
+                    f"string regex_extract group {params.get('group', 0)!r} was not found in the pattern.",
                     hint="Use group 0 for the whole match, a valid numeric capture group, or a named group that exists.",
                 ) from e
             except KeyError as e:
                 raise WowDataUserError(
-                    "E_STRING_GROUP",
-                    f"string regex_extract group {group!r} was not found in the pattern.",
-                    hint="Use group 0 for the whole match, a valid numeric capture group, or a named group that exists.",
+                    "E_STRING_ACTION",
+                    f"string action '{action}' failed.",
+                    hint=str(e),
+                ) from e
+            except WowDataUserError:
+                raise
+            except Exception as e:
+                raise WowDataUserError(
+                    "E_STRING_ACTION",
+                    f"string action '{action}' failed.",
+                    hint=str(e),
                 ) from e
 
         if target == column:
@@ -1279,6 +1468,7 @@ class StringTransform(TransformImpl):
         column = params.get("column")
         overwrite = params.get("overwrite", False)
         target = cls._target_column(params)
+        output_type = cls._ACTION_RESULT_TYPES.get(params.get("action"), "string")
         out_fields: List[Dict[str, Any]] = []
         replaced = False
 
@@ -1287,7 +1477,7 @@ class StringTransform(TransformImpl):
                 replaced = True
                 if target == column or overwrite:
                     nf = dict(f)
-                    nf["type"] = "string"
+                    nf["type"] = output_type
                     out_fields.append(nf)
                 else:
                     out_fields.append(f)
@@ -1295,7 +1485,7 @@ class StringTransform(TransformImpl):
             out_fields.append(f)
 
         if isinstance(target, str) and target.strip() and not replaced:
-            out_fields.append({"name": target, "type": "string"})
+            out_fields.append({"name": target, "type": output_type})
 
         return {"fields": out_fields}
 

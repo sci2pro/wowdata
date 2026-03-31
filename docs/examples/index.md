@@ -13,4 +13,5 @@ wow run examples/ml_model_candidates.yaml --base-dir examples
 
 - [Climate](climate.md)
 - [Machine Learning](machine-learning.md)
+- [String Operations](string-operations.md)
 - Repository copy: [EXAMPLES.md](https://github.com/sci2pro/wowdata/blob/main/EXAMPLES.md)

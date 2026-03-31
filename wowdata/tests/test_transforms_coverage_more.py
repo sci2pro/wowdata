@@ -209,6 +209,199 @@ def test_string_validation_apply_and_output_schema():
     }
 
 
+def test_string_python_method_actions_happy_path():
+    tbl = _tbl(
+        [
+            ("txt",),
+            ("hELLo world",),
+            ("  Alpha Beta  ",),
+            ("prefix-value-suffix",),
+            ("a,b,c",),
+            ("zip",),
+            ("template {0} {name}",),
+        ]
+    )
+
+    assert list(Transform("string", params={"column": "txt", "action": "capitalize"}).apply(tbl, context=PipelineContext()))[1][0] == "Hello world"
+    assert list(Transform("string", params={"column": "txt", "action": "casefold"}).apply(tbl, context=PipelineContext()))[1][0] == "hello world"
+    assert list(Transform("string", params={"column": "txt", "action": "lower"}).apply(tbl, context=PipelineContext()))[1][0] == "hello world"
+    assert list(Transform("string", params={"column": "txt", "action": "swapcase"}).apply(tbl, context=PipelineContext()))[1][0] == "HellO WORLD"
+    assert list(Transform("string", params={"column": "txt", "action": "title"}).apply(tbl, context=PipelineContext()))[1][0] == "Hello World"
+    assert list(Transform("string", params={"column": "txt", "action": "upper"}).apply(tbl, context=PipelineContext()))[1][0] == "HELLO WORLD"
+
+    strip_tbl = _tbl([("txt",), ("  x  ",)])
+    assert list(Transform("string", params={"column": "txt", "action": "strip"}).apply(strip_tbl, context=PipelineContext()))[1][0] == "x"
+    assert list(Transform("string", params={"column": "txt", "action": "lstrip", "chars": " x"}).apply(strip_tbl, context=PipelineContext()))[1][0] == ""
+    assert list(Transform("string", params={"column": "txt", "action": "rstrip", "chars": " x"}).apply(strip_tbl, context=PipelineContext()))[1][0] == ""
+
+    prefix_tbl = _tbl([("txt",), ("prefix-value-suffix",)])
+    assert list(Transform("string", params={"column": "txt", "action": "removeprefix", "prefix": "prefix-"}).apply(prefix_tbl, context=PipelineContext()))[1][0] == "value-suffix"
+    assert list(Transform("string", params={"column": "txt", "action": "removesuffix", "suffix": "-suffix"}).apply(prefix_tbl, context=PipelineContext()))[1][0] == "prefix-value"
+    assert list(Transform("string", params={"column": "txt", "action": "replace", "old": "-", "new_value": " ", "count": 1}).apply(prefix_tbl, context=PipelineContext()))[1][0] == "prefix value-suffix"
+
+    split_tbl = _tbl([("txt",), ("a,b,c",), ("left:right",)])
+    assert list(Transform("string", params={"column": "txt", "action": "split", "sep": ",", "maxsplit": 1}).apply(split_tbl, context=PipelineContext()))[1][0] == ["a", "b,c"]
+    assert list(Transform("string", params={"column": "txt", "action": "partition", "sep": ":"}).apply(split_tbl, context=PipelineContext()))[2][0] == ("left", ":", "right")
+    assert list(Transform("string", params={"column": "txt", "action": "rpartition", "sep": ":"}).apply(split_tbl, context=PipelineContext()))[2][0] == ("left", ":", "right")
+
+    zfill_tbl = _tbl([("txt",), ("7",)])
+    assert list(Transform("string", params={"column": "txt", "action": "zfill", "width": 3}).apply(zfill_tbl, context=PipelineContext()))[1][0] == "007"
+
+    encode_tbl = _tbl([("txt",), ("cafE9",)])
+    assert list(
+        Transform("string", params={"column": "txt", "action": "encode", "encoding": "utf-8"}).apply(
+            encode_tbl, context=PipelineContext()
+        )
+    )[1][0] == b"cafE9"
+
+    format_tbl = _tbl([("txt",), ("Hello {0} {name}",)])
+    assert list(
+        Transform(
+            "string",
+            params={"column": "txt", "action": "format", "args": ["Ms."], "kwargs": {"name": "Ada"}},
+        ).apply(format_tbl, context=PipelineContext())
+    )[1][0] == "Hello Ms. Ada"
+
+
+def test_string_python_method_validation_errors_and_runtime_error():
+    tbl = _tbl([("txt",), ("value",)])
+    ctx = PipelineContext(schema={"fields": [{"name": "txt"}]})
+
+    bad_params = [
+        {"column": "txt", "action": "strip", "chars": 1},
+        {"column": "txt", "action": "partition", "sep": ""},
+        {"column": "txt", "action": "split", "sep": ""},
+        {"column": "txt", "action": "split", "sep": ",", "maxsplit": "1"},
+        {"column": "txt", "action": "removeprefix", "prefix": None},
+        {"column": "txt", "action": "removesuffix", "suffix": None},
+        {"column": "txt", "action": "replace", "old": "-", "new_value": 1},
+        {"column": "txt", "action": "replace", "old": "-", "new_value": " ", "count": "1"},
+        {"column": "txt", "action": "format", "args": "bad"},
+        {"column": "txt", "action": "format", "kwargs": {1: "bad"}},
+        {"column": "txt", "action": "encode", "encoding": 1},
+        {"column": "txt", "action": "encode", "errors": 1},
+        {"column": "txt", "action": "zfill", "width": "3"},
+    ]
+    for params in bad_params:
+        with pytest.raises(WowDataUserError) as ex:
+            Transform("string", params=params).apply(tbl, context=ctx)
+        assert ex.value.code == "E_STRING_PARAMS"
+
+    with pytest.raises(WowDataUserError) as ex:
+        list(
+            Transform(
+                "string",
+                params={"column": "txt", "action": "encode", "encoding": "not-a-real-codec", "new": "encoded"},
+            ).apply(_tbl([("txt",), ("Hello",)]), context=PipelineContext())
+        )
+    assert ex.value.code == "E_STRING_ACTION"
+
+
+def test_string_python_method_output_schema_types():
+    base = {"fields": [{"name": "txt", "type": "string"}]}
+
+    assert Transform("string", params={"column": "txt", "action": "split"}).output_schema(base)["fields"][0]["type"] == "any"
+    assert Transform("string", params={"column": "txt", "action": "partition", "sep": ":"}).output_schema(base)["fields"][0]["type"] == "any"
+    assert Transform("string", params={"column": "txt", "action": "encode"}).output_schema(base)["fields"][0]["type"] == "any"
+    assert Transform(
+        "string",
+        params={"column": "txt", "action": "upper", "new": "upper_txt"},
+    ).output_schema(base)["fields"][-1] == {"name": "upper_txt", "type": "string"}
+
+    collision = {"fields": [{"name": "txt", "type": "string"}, {"name": "upper_txt", "type": "integer"}]}
+    assert Transform(
+        "string",
+        params={"column": "txt", "action": "upper", "new": "upper_txt"},
+    ).output_schema(collision)["fields"][-1] == {"name": "upper_txt", "type": "integer"}
+
+
+def test_string_extra_branches_for_full_action_coverage():
+    with pytest.raises(WowDataUserError) as ex:
+        Transform("string", params={"column": "txt", "action": "regex_replace"}).apply(
+            _tbl([("txt",), ("x",)]), context=PipelineContext()
+        )
+    assert ex.value.code == "E_STRING_PARAMS"
+
+    with pytest.raises(WowDataUserError) as ex:
+        Transform("string", params={"column": "missing", "action": "upper"}).apply(
+            _tbl([("txt",), ("x",)]), context=PipelineContext(schema={"fields": [{"name": "txt"}]})
+        )
+    assert ex.value.code == "E_STRING_UNKNOWN_COL"
+
+    with pytest.raises(WowDataUserError) as ex:
+        Transform("string", params={"column": "missing", "action": "upper"}).apply(
+            _tbl([("txt",), ("x",)]), context=PipelineContext()
+        )
+    assert ex.value.code == "E_STRING_UNKNOWN_COL"
+
+    with pytest.raises(WowDataUserError) as ex:
+        Transform("string", params={"column": "txt", "action": "upper", "new": "out"}).apply(
+            _tbl([("txt", "out"), ("x", "y")]), context=PipelineContext()
+        )
+    assert ex.value.code == "E_STRING_EXISTS"
+
+    replace_tbl = _tbl([("txt",), ("a-a",)])
+    assert list(
+        Transform(
+            "string",
+            params={"column": "txt", "action": "replace", "old": "-", "new_value": " "},
+        ).apply(replace_tbl, context=PipelineContext())
+    )[1][0] == "a a"
+    assert list(Transform("string", params={"column": "txt", "action": "split"}).apply(_tbl([("txt",), ("a b",)]), context=PipelineContext()))[1][0] == ["a", "b"]
+
+    with pytest.raises(WowDataUserError) as ex:
+        list(
+            mt.StringTransform.apply(
+                _tbl([("txt",), ("Hello {name}",)]),
+                params={"column": "txt", "action": "format", "kwargs": {}, "new": "formatted"},
+                context=PipelineContext(),
+            )
+        )
+    assert ex.value.code == "E_STRING_ACTION"
+
+    with pytest.raises(WowDataUserError) as ex:
+        list(
+            mt.StringTransform.apply(
+                _tbl([("txt",), ("x",)]),
+                params={"column": "txt", "action": "not-supported", "new": "out"},
+                context=PipelineContext(),
+            )
+        )
+    assert ex.value.code == "E_STRING_PARAMS"
+
+    with pytest.raises(WowDataUserError) as ex:
+        list(
+            mt.StringTransform.apply(
+                _tbl([("txt",), ("abc123",)]),
+                params={
+                    "column": "txt",
+                    "action": "regex_extract",
+                    "pattern": r"(\d+)",
+                    "group": 2,
+                    "new": "out",
+                },
+                context=PipelineContext(),
+            )
+        )
+    assert ex.value.code == "E_STRING_GROUP"
+
+    with pytest.raises(WowDataUserError) as ex:
+        list(
+            mt.StringTransform.apply(
+                _tbl([("txt",), ("abc123",)]),
+                params={
+                    "column": "txt",
+                    "action": "regex_extract",
+                    "pattern": r"(?P<num>\d+)",
+                    "group": "missing",
+                    "new": "out",
+                },
+                context=PipelineContext(),
+            )
+        )
+    assert ex.value.code == "E_STRING_GROUP"
+
+
 def test_validate_and_join_deeper_branches(monkeypatch, tmp_path):
     orig_head = mt.etl.head
     orig_header = mt.etl.header

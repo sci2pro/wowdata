@@ -88,3 +88,24 @@ mkdocs serve
 ```
 
 The same docs can be published to GitHub Pages (for `wowdata.github.io`).
+
+## Testing
+
+Run the default local test target:
+
+```bash
+pytest
+```
+
+Or through `tox`:
+
+```bash
+tox
+```
+
+`tox` is configured to run Python 3.14 by default. If you explicitly want a different interpreter or a wider matrix, request it directly, for example:
+
+```bash
+tox -e py311
+tox -e py310,py311,py312,py313,py314
+```

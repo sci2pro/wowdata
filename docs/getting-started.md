@@ -89,6 +89,9 @@ If you want a quick string-cleaning example, the `string` transform can normaliz
       repl: ""
 ```
 
+For more examples covering `strip`, `replace`, `split`, `format`, `encode`, and `zfill`, see
+[String Operation Examples](examples/string-operations.md).
+
 ## CLI (v0)
 
 WowData™ includes a CLI for running YAML-serialized pipelines.

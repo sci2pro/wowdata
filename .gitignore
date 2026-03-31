@@ -19,3 +19,5 @@
 /experiments/out_validate.csv
 /experiments/people_enriched.csv
 .pytest_cache
+__pycache__/
+*.egg-info/
