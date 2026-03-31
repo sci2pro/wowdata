@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+- Added epidemiology examples covering line-list cleanup and weekly incidence preparation.
+- Integrated the epidemiology walkthrough into the examples navigation and repository examples index.
+- Added regression tests to ensure the checked-in epidemiology example pipelines execute successfully.
+
 ## 0.2.1
 
 - Expanded `string` with Python-style operations including casing, trimming, splitting, prefix/suffix removal, formatting, encoding, partitioning, replacement, and zero-padding.
