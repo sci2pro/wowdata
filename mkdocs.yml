@@ -12,6 +12,7 @@ nav:
       - Overview: examples/index.md
       - Climate: examples/climate.md
       - Machine Learning: examples/machine-learning.md
+      - Epidemiology: examples/epidemiology.md
       - String Operations: examples/string-operations.md
   - Reference:
       - Overview: reference/index.md

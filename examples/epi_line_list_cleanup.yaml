@@ -1,0 +1,130 @@
+wowdata: 0
+pipeline:
+  start:
+    uri: epi_line_list_raw.csv
+    type: csv
+  steps:
+    - transform:
+        op: string
+        params:
+          column: patient_name_raw
+          action: strip
+    - transform:
+        op: string
+        params:
+          column: patient_name_raw
+          action: replace
+          old: "  "
+          new_value: " "
+    - transform:
+        op: string
+        params:
+          column: patient_name_raw
+          action: title
+          new: patient_name
+    - transform:
+        op: string
+        params:
+          column: sex_raw
+          action: strip
+    - transform:
+        op: string
+        params:
+          column: sex_raw
+          action: upper
+          new: sex
+    - transform:
+        op: string
+        params:
+          column: district_code_raw
+          action: strip
+    - transform:
+        op: string
+        params:
+          column: district_code_raw
+          action: upper
+    - transform:
+        op: string
+        params:
+          column: district_code_raw
+          action: removeprefix
+          prefix: "DIST-"
+          new: district_code
+    - transform:
+        op: string
+        params:
+          column: district_code
+          action: zfill
+          width: 3
+    - transform:
+        op: string
+        params:
+          column: facility_label
+          action: removeprefix
+          prefix: "site:"
+          new: facility_compact
+    - transform:
+        op: string
+        params:
+          column: facility_compact
+          action: partition
+          sep: "|"
+          new: facility_parts
+    - transform:
+        op: string
+        params:
+          column: facility_compact
+          action: regex_extract
+          pattern: "^([A-Z0-9]+)"
+          group: 1
+          new: facility_code
+    - transform:
+        op: string
+        params:
+          column: symptom_blob
+          action: split
+          sep: ";"
+          new: symptom_tokens
+    - transform:
+        op: string
+        params:
+          column: outcome_note
+          action: replace
+          old: "-"
+          new_value: " "
+          new: outcome_clean
+    - transform:
+        op: string
+        params:
+          column: outcome_clean
+          action: title
+    - transform:
+        op: string
+        params:
+          column: classification_note
+          action: capitalize
+          new: classification
+    - transform:
+        op: cast
+        params:
+          types:
+            age_raw: integer
+          on_error: "null"
+    - transform:
+        op: join
+        params:
+          right: epi_sites.csv
+          on: [facility_code]
+          how: left
+    - transform:
+        op: derive
+        params:
+          new: is_admitted
+          expr: "outcome_clean == 'Admitted Case'"
+    - transform:
+        op: select
+        params:
+          columns: [case_id, patient_name, sex, age_raw, onset_date_raw, district_code, facility_code, facility_name, county, symptom_tokens, outcome_clean, classification, is_admitted]
+    - sink:
+        uri: epi_line_list_clean.csv
+        type: csv

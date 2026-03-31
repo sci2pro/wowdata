@@ -1,0 +1,4 @@
+district_code_raw,district_label_raw,epi_week_raw,cases_raw,report_file,bulletin_path,status_note,investigator_email_raw
+" dist-7 ","KISUMU COUNTY ",ew07,14,week07.csv,bulletins/weekly/ew07,draft. ,Surveillance@MoH.GO.KE
+dist-12,nairobi county,EW08,27,week08.csv,bulletins/weekly/ew08,final.,Field.Team@MoH.GO.KE
+dist-3," HOMA BAY COUNTY",ew09,9,week09.csv,bulletins/weekly/ew09,provisional..,Rapid.Response@MoH.GO.KE

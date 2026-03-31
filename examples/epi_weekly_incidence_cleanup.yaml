@@ -1,0 +1,114 @@
+wowdata: 0
+pipeline:
+  start:
+    uri: epi_weekly_incidence_raw.csv
+    type: csv
+  steps:
+    - transform:
+        op: string
+        params:
+          column: district_label_raw
+          action: strip
+    - transform:
+        op: string
+        params:
+          column: district_label_raw
+          action: title
+          new: district_label
+    - transform:
+        op: string
+        params:
+          column: district_label
+          action: casefold
+          new: district_key
+    - transform:
+        op: string
+        params:
+          column: district_code_raw
+          action: strip
+    - transform:
+        op: string
+        params:
+          column: district_code_raw
+          action: lower
+    - transform:
+        op: string
+        params:
+          column: district_code_raw
+          action: removeprefix
+          prefix: "dist-"
+          new: district_code
+    - transform:
+        op: string
+        params:
+          column: district_code
+          action: zfill
+          width: 3
+    - transform:
+        op: string
+        params:
+          column: epi_week_raw
+          action: upper
+    - transform:
+        op: string
+        params:
+          column: epi_week_raw
+          action: removeprefix
+          prefix: "EW"
+          new: epi_week_num
+    - transform:
+        op: string
+        params:
+          column: epi_week_num
+          action: zfill
+          width: 2
+    - transform:
+        op: string
+        params:
+          column: report_file
+          action: removesuffix
+          suffix: ".csv"
+          new: report_stub
+    - transform:
+        op: string
+        params:
+          column: bulletin_path
+          action: rpartition
+          sep: "/"
+          new: bulletin_parts
+    - transform:
+        op: string
+        params:
+          column: status_note
+          action: rstrip
+          chars: ". "
+          new: status_clean
+    - transform:
+        op: string
+        params:
+          column: status_clean
+          action: capitalize
+    - transform:
+        op: string
+        params:
+          column: investigator_email_raw
+          action: casefold
+          new: investigator_email
+    - transform:
+        op: cast
+        params:
+          types:
+            cases_raw: integer
+          on_error: "null"
+    - transform:
+        op: derive
+        params:
+          new: incidence_flag
+          expr: "cases_raw >= 20"
+    - transform:
+        op: select
+        params:
+          columns: [district_code, district_label, district_key, epi_week_num, cases_raw, report_stub, bulletin_parts, status_clean, investigator_email, incidence_flag]
+    - sink:
+        uri: epi_weekly_incidence_clean.csv
+        type: csv

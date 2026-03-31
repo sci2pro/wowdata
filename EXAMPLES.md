@@ -466,3 +466,29 @@ Examples:
 
 - `"7"` becomes `"00007"`
 - `"mIXed Case"` becomes `"MixED cASE"`
+
+## Epidemiology Demo (Line Lists and Weekly Incidence)
+
+This branch also includes epidemiology-oriented examples that lean heavily on the newer `string` actions.
+
+### Example files
+
+- `examples/epi_line_list_raw.csv`
+- `examples/epi_sites.csv`
+- `examples/epi_line_list_cleanup.yaml`
+- `examples/epi_weekly_incidence_raw.csv`
+- `examples/epi_weekly_incidence_cleanup.yaml`
+
+### What they demonstrate
+
+- line-list cleanup for patient names, district codes, facility labels, symptoms, and outcome text
+- weekly incidence cleanup for district labels, week tokens, report stubs, bulletin paths, and investigator emails
+- use of `strip`, `title`, `upper`, `lower`, `casefold`, `capitalize`, `replace`, `split`, `partition`, `rpartition`, `removeprefix`, `removesuffix`, `rstrip`, and `zfill`
+- follow-on `cast`, `join`, `derive`, and `select` steps after string normalization
+
+Run them:
+
+```bash
+wow run examples/epi_line_list_cleanup.yaml --base-dir examples
+wow run examples/epi_weekly_incidence_cleanup.yaml --base-dir examples
+```

@@ -1,0 +1,4 @@
+case_id,patient_name_raw,sex_raw,age_raw,onset_date_raw,district_code_raw,facility_label,symptom_blob,outcome_note,classification_note
+CL-001,"  ama njoroge "," f ",34,2025-03-02," dist-7 ","site:HC01|north wing","fever;cough;headache","admitted-case",confirmed
+CL-002,"JOHN  OTIENO",M,not_reported,2025-03-03,DIST-12,"site:HC02|field tent",fever,home-isolation,probable
+CL-003,"  liya  Hassan  "," Female ",17,2025-03-04,dist-3,"site:HC99|triage","rash;fever",transferred-out,suspected
