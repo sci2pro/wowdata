@@ -263,6 +263,52 @@ def test_string_python_method_actions_happy_path():
     )[1][0] == "Hello Ms. Ada"
 
 
+def test_string_format_supports_python_format_spec_mini_language():
+    tbl = _tbl(
+        [
+            ("txt",),
+            ("{label:<8}",),
+            ("{value:>8.2f}",),
+            ("{count:04d}",),
+            ("{ratio:.1%}",),
+            ("{signed:+.1f}",),
+            ("{big:,d}",),
+            ("{label:*^8}",),
+            ("{0:^6}",),
+            ("{{{label}}}",),
+        ]
+    )
+
+    out = list(
+        Transform(
+            "string",
+            params={
+                "column": "txt",
+                "action": "format",
+                "args": ["ID"],
+                "kwargs": {
+                    "label": "KE",
+                    "value": 12.345,
+                    "count": 7,
+                    "ratio": 0.1375,
+                    "signed": -3.5,
+                    "big": 1234567,
+                },
+            },
+        ).apply(tbl, context=PipelineContext())
+    )
+
+    assert out[1][0] == "KE      "
+    assert out[2][0] == "   12.35"
+    assert out[3][0] == "0007"
+    assert out[4][0] == "13.8%"
+    assert out[5][0] == "-3.5"
+    assert out[6][0] == "1,234,567"
+    assert out[7][0] == "***KE***"
+    assert out[8][0] == "  ID  "
+    assert out[9][0] == "{KE}"
+
+
 def test_string_python_method_validation_errors_and_runtime_error():
     tbl = _tbl([("txt",), ("value",)])
     ctx = PipelineContext(schema={"fields": [{"name": "txt"}]})

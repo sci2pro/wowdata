@@ -16,11 +16,21 @@ nav:
       - String Operations: examples/string-operations.md
   - Reference:
       - Overview: reference/index.md
+      - CLI: reference/cli.md
+      - Sources: reference/sources.md
+      - Pipeline: reference/pipeline.md
+      - YAML / IR Format: reference/yaml-ir.md
+      - Transform Object: reference/transform-object.md
       - Transforms: reference/transforms.md
+      - Sinks: reference/sinks.md
       - Errors: reference/errors.md
 markdown_extensions:
   - admonition
+  - pymdownx.details
   - codehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
   - tables
   - toc:
       permalink: true

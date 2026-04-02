@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0
+
+- Reworked the reference documentation into a production-level API guide.
+- Added dedicated reference pages for the CLI, pipeline model, transform object, YAML / IR format, sources, and sinks.
+- Expanded the transform reference into per-transform sections with signatures, Python/YAML examples, argument explanations, and linked Expression DSL guidance.
+- Expanded the errors reference into a structured family-based guide for user-facing failure modes.
+
 ## 0.2.3
 
 - Added epidemiology examples covering line-list cleanup and weekly incidence preparation.
